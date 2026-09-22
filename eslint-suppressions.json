@@ -231,7 +231,7 @@
   },
   "client/src/components/Chat/Input/Files/FileRow.tsx": {
     "shadcn/no-inline-styles": {
-      "count": 11
+      "count": 7
     }
   },
   "client/src/components/Chat/Input/Files/FileUpload.tsx": {
@@ -1625,6 +1625,14 @@
     },
     "shadcn/require-static-classes": {
       "count": 2
+    }
+  },
+  "client/src/components/Sharing/PeoplePicker/SearchPicker.tsx": {
+    "shadcn/no-restyle": {
+      "count": 3
+    },
+    "shadcn/require-static-classes": {
+      "count": 1
     }
   },
   "client/src/components/Sharing/PeoplePicker/SelectedPrincipalsList.tsx": {

@@ -335,19 +335,9 @@
       "count": 1
     }
   },
-  "client/src/components/Chat/Input/SendButton.tsx": {
-    "shadcn/require-static-classes": {
-      "count": 1
-    }
-  },
   "client/src/components/Chat/Input/SkillsCommand.tsx": {
     "shadcn/no-restyle": {
       "count": 6
-    }
-  },
-  "client/src/components/Chat/Input/StopButton.tsx": {
-    "shadcn/require-static-classes": {
-      "count": 1
     }
   },
   "client/src/components/Chat/Input/StreamAudio.tsx": {

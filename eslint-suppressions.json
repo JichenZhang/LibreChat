@@ -1958,22 +1958,6 @@
       "count": 1
     }
   },
-  "client/src/components/SidePanel/Files/PanelColumns.tsx": {
-    "shadcn/no-restyle": {
-      "count": 4
-    }
-  },
-  "client/src/components/SidePanel/Files/PanelTable.tsx": {
-    "shadcn/no-arbitrary-values": {
-      "count": 1
-    },
-    "shadcn/no-inline-styles": {
-      "count": 3
-    },
-    "shadcn/no-restyle": {
-      "count": 17
-    }
-  },
   "client/src/components/SidePanel/MCPBuilder/MCPBuilderPanel.tsx": {
     "shadcn/no-restyle": {
       "count": 3

@@ -102,17 +102,17 @@ export default function DataTable<TData, TValue>({ columns, data }: DataTablePro
         onChange={(event) => table.getColumn('filename')?.setFilterValue(event.target.value)}
       />
 
-      <div className="border-border-light rounded-lg border bg-transparent shadow-xs transition-colors">
+      <div className="shadow-xs rounded-lg border border-border-light bg-transparent transition-colors">
         <div className="overflow-hidden">
           <Table className="table-fixed">
             <TableHeader>
               {table.getHeaderGroups().map((headerGroup) => (
-                <TableRow key={headerGroup.id} className="border-border-light border-b">
+                <TableRow key={headerGroup.id} className="border-b border-border-light">
                   {headerGroup.headers.map((header, index) => (
                     <TableHead
                       key={header.id}
                       style={{ width: index === 0 ? '75%' : '25%' }}
-                      className="bg-surface-secondary text-text-secondary py-2 text-sm font-medium"
+                      className="bg-surface-secondary py-2 text-sm font-medium text-text-secondary"
                     >
                       <div className={index === 0 ? 'px-2' : 'flex justify-end px-1'}>
                         {header.isPlaceholder
@@ -130,7 +130,7 @@ export default function DataTable<TData, TValue>({ columns, data }: DataTablePro
                   <TableRow
                     key={row.id}
                     data-state={row.getIsSelected() && 'selected'}
-                    className="border-border-light hover:bg-surface-secondary border-b transition-colors [&:last-child]:border-0"
+                    className="border-b border-border-light transition-colors hover:bg-surface-secondary [&:last-child]:border-0"
                   >
                     {row.getVisibleCells().map((cell) => {
                       const isFilenameCell = cell.column.id === 'filename';
@@ -146,7 +146,7 @@ export default function DataTable<TData, TValue>({ columns, data }: DataTablePro
                           }}
                           className={
                             isFilenameCell
-                              ? 'focus-visible:outline-text-primary focus-visible:outline-2 focus-visible:outline-offset-[-2px]'
+                              ? 'focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-text-primary'
                               : ''
                           }
                           data-skip-refocus="true"
@@ -191,7 +191,7 @@ export default function DataTable<TData, TValue>({ columns, data }: DataTablePro
                 <TableRow>
                   <TableCell
                     colSpan={columns.length}
-                    className="text-text-secondary h-24 text-center text-sm"
+                    className="h-24 text-center text-sm text-text-secondary"
                   >
                     {localize('com_files_no_results')}
                   </TableCell>

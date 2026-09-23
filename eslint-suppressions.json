@@ -346,9 +346,6 @@
     }
   },
   "client/src/components/Chat/Input/StopButton.tsx": {
-    "shadcn/no-restyle": {
-      "count": 2
-    },
     "shadcn/require-static-classes": {
       "count": 1
     }

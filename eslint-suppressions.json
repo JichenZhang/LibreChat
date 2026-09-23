@@ -179,14 +179,6 @@
       "count": 1
     }
   },
-  "client/src/components/Chat/Input/Artifacts.tsx": {
-    "shadcn/no-restyle": {
-      "count": 2
-    },
-    "shadcn/require-static-classes": {
-      "count": 1
-    }
-  },
   "client/src/components/Chat/Input/AskUserQuestionPopover.tsx": {
     "shadcn/no-restyle": {
       "count": 13
@@ -286,17 +278,9 @@
       "count": 1
     }
   },
-  "client/src/components/Chat/Input/Files/Table/TemplateTable.tsx": {
-    "shadcn/no-raw-colors": {
-      "count": 31
-    }
-  },
-  "client/src/components/Chat/Input/InFlightSteers.tsx": {
-    "shadcn/no-unknown-classes": {
-      "count": 1
-    },
-    "shadcn/require-static-classes": {
-      "count": 1
+  "client/src/components/Chat/Input/HeaderOptions.tsx": {
+    "shadcn/no-restyle": {
+      "count": 9
     }
   },
   "client/src/components/Chat/Input/MCPConfigDialog.tsx": {

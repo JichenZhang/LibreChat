@@ -1610,6 +1610,34 @@ describe('User parameter passing tests', () => {
       callTool.mockClear();
       await expect(mcpTool.invoke({ name: 'other' }, config)).rejects.toThrow('not selected');
       expect(callTool).not.toHaveBeenCalled();
+
+      const primedConfig = {
+        ...config,
+        configurable: {
+          user,
+          accessibleSkillIds: [selectedId],
+          skillPrimedIdsByName: { docx: selectedId },
+        },
+      };
+      await mcpTool.invoke({ name: 'docx', skill_id: unselectedId }, primedConfig);
+      expect(callTool).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolArguments: { name: 'docx', skill_id: selectedId },
+        }),
+      );
+      callTool.mockClear();
+      const outOfScopePrime = {
+        ...config,
+        configurable: {
+          user,
+          accessibleSkillIds: [unselectedId],
+          skillPrimedIdsByName: { docx: selectedId },
+        },
+      };
+      await expect(mcpTool.invoke({ name: 'docx' }, outOfScopePrime)).rejects.toThrow(
+        'not selected',
+      );
+      expect(callTool).not.toHaveBeenCalled();
     });
 
     it('keeps shared OAuth recovery alive when one tool caller aborts', async () => {

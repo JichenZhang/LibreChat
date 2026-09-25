@@ -8,13 +8,11 @@ const {
   PermissionBits,
   ResourceType,
 } = require('librechat-data-provider');
-const {
-  findAccessibleResources,
-  resolveDownloadPath,
-} = require('@librechat/api');
+const { resolveDownloadPath } = require('@librechat/api');
 const configMiddleware = require('~/server/middleware/config/app');
 const db = require('~/models');
 const { fileAccess } = require('~/server/middleware/accessResources/fileAccess');
+const { findAccessibleResources } = require('~/server/services/PermissionService');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const {
   getSkillDbMethods,
@@ -83,26 +81,31 @@ router.get('/attachments/:file_id', fileAccess, async (req, res) => {
     if (file.source === FileSources.text || file.bytes > MAX_BYTES) return res.sendStatus(413);
     const strategy = getStrategyFunctions(file.source);
     if (!strategy.getDownloadStream) return res.sendStatus(415);
-    const bytes = await boundedBytes(await strategy.getDownloadStream(req, resolveDownloadPath(file)));
+    const bytes = await boundedBytes(
+      await strategy.getDownloadStream(req, resolveDownloadPath(file)),
+    );
     res.type('application/octet-stream').set('Cache-Control', 'no-store').send(bytes);
   } catch (error) {
     return binaryFailure(res, error);
   }
 });
 
-async function accessibleSkill(req, name) {
+async function accessibleSkill(req, name, skillId) {
+  if (typeof skillId !== 'string' || !/^[0-9a-f]{24}$/.test(skillId)) return null;
   const ids = await findAccessibleResources({
     userId: req.user.id,
     role: req.user.role,
     resourceType: ResourceType.SKILL,
     requiredPermissions: PermissionBits.VIEW,
   });
-  return getSkillDbMethods().getSkillByName(name, withDeploymentSkillIds(ids));
+  if (!withDeploymentSkillIds(ids).some((id) => id.toString() === skillId)) return null;
+  const skill = await getSkillDbMethods().getSkillById(skillId);
+  return skill?.name === name ? skill : null;
 }
 
 router.get('/skills/:name', async (req, res) => {
   try {
-    const skill = await accessibleSkill(req, req.params.name);
+    const skill = await accessibleSkill(req, req.params.name, req.query.skill_id);
     if (!skill) return res.sendStatus(404);
     const files = await getSkillDbMethods().listSkillFiles(skill._id);
     return res.set('Cache-Control', 'no-store').json({
@@ -119,7 +122,7 @@ router.get('/skills/:name', async (req, res) => {
 
 router.get('/skills/:name/files/*relativePath', async (req, res) => {
   try {
-    const skill = await accessibleSkill(req, req.params.name);
+    const skill = await accessibleSkill(req, req.params.name, req.query.skill_id);
     if (!skill || String(skill.version) !== req.query.version) return res.sendStatus(404);
     const relativePath = req.params.relativePath?.join('/');
     if (!relativePath) return res.sendStatus(400);
@@ -127,7 +130,9 @@ router.get('/skills/:name/files/*relativePath', async (req, res) => {
     if (!file || file.bytes > MAX_BYTES) return res.sendStatus(file ? 413 : 404);
     const strategy = getSkillToolDeps().getStrategyFunctions(file.source);
     if (!strategy.getDownloadStream) return res.sendStatus(415);
-    const bytes = await boundedBytes(await strategy.getDownloadStream(req, resolveDownloadPath(file)));
+    const bytes = await boundedBytes(
+      await strategy.getDownloadStream(req, resolveDownloadPath(file)),
+    );
     return res.type('application/octet-stream').set('Cache-Control', 'no-store').send(bytes);
   } catch (error) {
     return binaryFailure(res, error);
@@ -137,46 +142,62 @@ router.get('/skills/:name/files/*relativePath', async (req, res) => {
 // A selected, already-authorized NAS result is pushed by Workspace MCP into
 // the existing LibreChat local strategy and file model. Browser downloads use
 // the normal /api/files/download route and its native fileAccess middleware.
-router.post('/outputs', express.raw({ type: 'application/octet-stream', limit: MAX_BYTES }), async (req, res) => {
-  const bytes = req.body;
-  const filename = req.query.filename;
-  if (!Buffer.isBuffer(bytes) || !bytes.length ||
-      typeof filename !== 'string' || !/^[^/\\\x00-\x1f]{1,255}$/.test(filename) ||
-      filename === '.' || filename === '..') return res.sendStatus(400);
-  const fileId = crypto.randomUUID();
-  const strategy = getStrategyFunctions(FileSources.local);
-  if (!strategy.saveBuffer) return res.sendStatus(503);
-  let filepath;
-  try {
-    filepath = await strategy.saveBuffer({
-      userId: req.user.id,
-      buffer: bytes,
-      fileName: `${fileId}__${filename}`,
-      basePath: 'uploads',
-    });
-    const file = await db.createFile({
-      file_id: fileId,
-      user: req.user.id,
-      tenantId: req.user.tenantId,
-      filename,
-      filepath,
-      source: FileSources.local,
-      context: FileContext.run_artifact,
-      type: mime.getType(filename) || 'application/octet-stream',
-      bytes: bytes.length,
-      usage: 1,
-    }, true);
-    return res.status(201).set('Cache-Control', 'no-store').json({
-      file_id: file.file_id,
-      filename: file.filename,
-      download_path: `/api/files/download/${req.user.id}/${file.file_id}`,
-    });
-  } catch (error) {
-    if (filepath && strategy.deleteFile) {
-      await strategy.deleteFile(req, { filepath, user: req.user.id }).catch(() => undefined);
+router.post(
+  '/outputs',
+  express.raw({ type: 'application/octet-stream', limit: MAX_BYTES }),
+  async (req, res) => {
+    const bytes = req.body;
+    const filename = req.query.filename;
+    if (
+      !Buffer.isBuffer(bytes) ||
+      !bytes.length ||
+      typeof filename !== 'string' ||
+      !/^[^/\\\x00-\x1f]{1,255}$/.test(filename) ||
+      filename === '.' ||
+      filename === '..'
+    )
+      return res.sendStatus(400);
+    const fileId = crypto.randomUUID();
+    const strategy = getStrategyFunctions(FileSources.local);
+    if (!strategy.saveBuffer) return res.sendStatus(503);
+    let filepath;
+    try {
+      filepath = await strategy.saveBuffer({
+        userId: req.user.id,
+        buffer: bytes,
+        fileName: `${fileId}__${filename}`,
+        basePath: 'uploads',
+      });
+      const file = await db.createFile(
+        {
+          file_id: fileId,
+          user: req.user.id,
+          tenantId: req.user.tenantId,
+          filename,
+          filepath,
+          source: FileSources.local,
+          context: FileContext.run_artifact,
+          type: mime.getType(filename) || 'application/octet-stream',
+          bytes: bytes.length,
+          usage: 1,
+        },
+        true,
+      );
+      return res
+        .status(201)
+        .set('Cache-Control', 'no-store')
+        .json({
+          file_id: file.file_id,
+          filename: file.filename,
+          download_path: `/api/files/download/${req.user.id}/${file.file_id}`,
+        });
+    } catch (error) {
+      if (filepath && strategy.deleteFile) {
+        await strategy.deleteFile(req, { filepath, user: req.user.id }).catch(() => undefined);
+      }
+      return binaryFailure(res, error);
     }
-    return binaryFailure(res, error);
-  }
-});
+  },
+);
 
 module.exports = router;

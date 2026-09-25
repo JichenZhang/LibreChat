@@ -82,6 +82,9 @@ jest.mock('~/models', () => ({
   deleteTokens: jest.fn(),
   getRoleByName: jest.fn(),
 }));
+jest.mock('~/server/services/Endpoints/agents/skillDeps', () => ({
+  getSkillDbMethods: jest.fn(),
+}));
 
 jest.mock('./Tools/mcp', () => ({
   reinitMCPServer: jest.fn(),
@@ -1544,6 +1547,71 @@ describe('User parameter passing tests', () => {
   });
 
   describe('createMCPTool', () => {
+    it('pins Workspace Skill staging to the trusted selected Agent Skill', async () => {
+      const user = { id: 'skill-scope-user', role: 'USER' };
+      const { getRoleByName } = require('~/models');
+      getRoleByName.mockResolvedValue({
+        permissions: {
+          [PermissionTypes.MCP_SERVERS]: { [Permissions.USE]: true },
+        },
+      });
+      const selectedId = '0123456789abcdef01234567';
+      const unselectedId = 'fedcba9876543210fedcba98';
+      const skill = { _id: { toString: () => selectedId }, name: 'docx' };
+      const methods = {
+        getSkillByName: jest.fn(async (name, ids) =>
+          name === 'docx' && ids.includes(selectedId) ? skill : null,
+        ),
+        getSkillById: jest.fn(async (id) => (id === selectedId ? skill : null)),
+      };
+      require('~/server/services/Endpoints/agents/skillDeps').getSkillDbMethods.mockReturnValue(
+        methods,
+      );
+      const callTool = jest.fn().mockResolvedValue(['ok', null]);
+      mockGetMCPManager.mockReturnValue({ callTool });
+      const key = `workspace_stage_skill${D}workspace-mcp`;
+      const mcpTool = await createMCPTool({
+        res: { write: jest.fn(), flush: jest.fn() },
+        user,
+        toolKey: key,
+        provider: 'openai',
+        userMCPAuthMap: {},
+        availableTools: {
+          [key]: {
+            serverToolName: 'workspace_stage_skill',
+            function: {
+              name: key,
+              description: 'Stage Skill',
+              parameters: {
+                type: 'object',
+                properties: { name: { type: 'string' }, skill_id: { type: 'string' } },
+              },
+            },
+          },
+        },
+      });
+      const config = {
+        configurable: {
+          user,
+          accessibleSkillIds: [selectedId],
+          activeSkillNames: new Set(['docx']),
+        },
+        metadata: { provider: 'openai', thread_id: 'thread-1', run_id: 'run-1' },
+        toolCall: {},
+      };
+      await mcpTool.invoke({ name: 'docx', skill_id: unselectedId }, config);
+      expect(callTool).toHaveBeenCalledWith(
+        expect.objectContaining({
+          serverName: 'workspace-mcp',
+          toolName: 'workspace_stage_skill',
+          toolArguments: { name: 'docx', skill_id: selectedId },
+        }),
+      );
+      callTool.mockClear();
+      await expect(mcpTool.invoke({ name: 'other' }, config)).rejects.toThrow('not selected');
+      expect(callTool).not.toHaveBeenCalled();
+    });
+
     it('keeps shared OAuth recovery alive when one tool caller aborts', async () => {
       const mockUser = { id: 'shared-recovery-user', role: 'USER' };
       const mockRes = { write: jest.fn(), flush: jest.fn() };

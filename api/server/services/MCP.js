@@ -67,6 +67,7 @@ const { getGraphApiToken } = require('./GraphTokenService');
 const { exchangeOboToken } = require('./OboTokenService');
 const { createOboTrustChecker } = require('./OboPolicyService');
 const { createOpenIDSessionTokenProvider } = require('./OpenIDSessionRefresh');
+const { resolveWorkspaceSkillId } = require('./WorkspaceSkillScope');
 const { reinitMCPServer } = require('./Tools/mcp');
 const {
   getAppConfig,
@@ -1310,6 +1311,24 @@ function createToolInstance({
        * is required for OBO since the grant sends the access token to the IdP
        * as the jwt-bearer assertion.
        */
+      let scopedToolArguments = toolArguments;
+      if (
+        normalizeServerName(serverName) === 'workspace-mcp' &&
+        serverToolName === 'workspace_stage_skill'
+      ) {
+        // The model supplies the name; the active Agent's native Skill context
+        // supplies the ID. Never accept a model-claimed Skill ID or allowlist.
+        const name = toolArguments?.name;
+        const { getSkillDbMethods } = require('~/server/services/Endpoints/agents/skillDeps');
+        const skillId = await resolveWorkspaceSkillId(
+          config?.configurable,
+          name,
+          getSkillDbMethods(),
+        );
+        if (!skillId) throw new Error('Skill is not selected in this Agent');
+        scopedToolArguments = { ...toolArguments, skill_id: skillId };
+      }
+
       const result = await mcpManager.callTool({
         serverName,
         serverConfig: capturedServerConfig,
@@ -1317,7 +1336,7 @@ function createToolInstance({
          *  a redundant server-name prefix calls the ORIGINAL tool. */
         toolName: serverToolName,
         provider,
-        toolArguments,
+        toolArguments: scopedToolArguments,
         options: {
           signal: derivedSignal,
         },

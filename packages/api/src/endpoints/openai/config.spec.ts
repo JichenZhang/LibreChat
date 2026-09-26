@@ -7,6 +7,9 @@ import {
   ReasoningParameterFormat,
 } from 'librechat-data-provider';
 import type { RequestInit } from 'undici';
+import { createServer } from 'node:http';
+import { ChatOpenAI } from '@librechat/agents/llm/openai';
+import { HumanMessage } from '@librechat/agents/langchain/messages';
 import type { OpenAIParameters, AzureOptions } from '~/types';
 import { getOpenAIConfig } from './config';
 import { knownOpenAIParams } from './llm';
@@ -2198,4 +2201,63 @@ describe('getOpenAIConfig', () => {
       });
     });
   });
+});
+
+it('sends custom GPT-6 tool requests with the selected effort through the SDK transport', async () => {
+  const observed: Array<{ path: string; model: string; effort: unknown; reasoning: unknown }> = [];
+  const server = createServer((req, res) => {
+    let body = '';
+    req.setEncoding('utf8');
+    req.on('data', (chunk: string) => { body += chunk; });
+    req.on('end', () => {
+      const payload = JSON.parse(body) as Record<string, unknown>;
+      if (!Array.isArray(payload.tools) || payload.tools.length !== 1) {
+        res.statusCode = 400;
+        res.end('tool setup missing');
+        return;
+      }
+      observed.push({
+        path: req.url ?? '',
+        model: String(payload.model),
+        effort: payload.reasoning_effort,
+        reasoning: payload.reasoning,
+      });
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
+        id: 'mock-completion', object: 'chat.completion', created: 1,
+        model: payload.model, choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Missing mock port');
+    for (const model of ['gpt-6-sol', 'gpt-6-luna', 'gpt-6-astra']) {
+      for (const effort of ['', 'none', 'low']) {
+        const { llmConfig, configOptions } = getOpenAIConfig('local-test-key', {
+          streaming: false,
+          reverseProxyUrl: `http://127.0.0.1:${address.port}/api/codex/backend-api/codex/v1`,
+          modelOptions: { model, reasoning_effort: effort as ReasoningEffort },
+        }, 'Codex Mirror');
+        const client = new ChatOpenAI({ ...llmConfig, configuration: configOptions } as never);
+        await client.bindTools([{
+          type: 'function',
+          function: { name: 'workspace_roots', description: 'List roots', parameters: { type: 'object', properties: {} } },
+        }]).invoke([new HumanMessage('test')]);
+      }
+    }
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+  expect(observed).toHaveLength(9);
+  for (let i = 0; i < observed.length; i++) {
+    expect(observed[i]).toEqual({
+      path: '/api/codex/backend-api/codex/v1/chat/completions',
+      model: ['gpt-6-sol', 'gpt-6-luna', 'gpt-6-astra'][Math.floor(i / 3)],
+      effort: [undefined, 'none', 'low'][i % 3],
+      reasoning: undefined,
+    });
+  }
 });

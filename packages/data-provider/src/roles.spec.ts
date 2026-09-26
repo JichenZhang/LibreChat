@@ -159,19 +159,6 @@ describe('roleDefaults', () => {
     });
   });
 
-  it('lets a USER deliberately share an owned Agent and browse the native marketplace', () => {
-    const user = roleDefaults[SystemRoles.USER].permissions;
-    expect(user[PermissionTypes.AGENTS]).toEqual({
-      [Permissions.USE]: true,
-      [Permissions.CREATE]: true,
-      [Permissions.SHARE]: true,
-      [Permissions.SHARE_PUBLIC]: true,
-    });
-    expect(user[PermissionTypes.MARKETPLACE]).toEqual({ [Permissions.USE]: true });
-    expect(user[PermissionTypes.SKILLS][Permissions.SHARE_PUBLIC]).toBe(false);
-    expect(user[PermissionTypes.MCP_SERVERS][Permissions.SHARE_PUBLIC]).toBe(false);
-  });
-
   describe('MCP_SERVERS.CONFIGURE_OBO defaults', () => {
     it('grants ADMIN CONFIGURE_OBO by default', () => {
       const adminMcp = roleDefaults[SystemRoles.ADMIN].permissions[

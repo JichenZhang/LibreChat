@@ -236,8 +236,8 @@ export const roleDefaults = defaultRolesSchema.parse({
       [PermissionTypes.AGENTS]: {
         [Permissions.USE]: true,
         [Permissions.CREATE]: true,
-        [Permissions.SHARE]: false,
-        [Permissions.SHARE_PUBLIC]: false,
+        [Permissions.SHARE]: true,
+        [Permissions.SHARE_PUBLIC]: true,
       },
       [PermissionTypes.MULTI_CONVO]: {},
       [PermissionTypes.TEMPORARY_CHAT]: {},
@@ -249,7 +249,7 @@ export const roleDefaults = defaultRolesSchema.parse({
         [Permissions.VIEW_ROLES]: false,
       },
       [PermissionTypes.MARKETPLACE]: {
-        [Permissions.USE]: false,
+        [Permissions.USE]: true,
       },
       [PermissionTypes.FILE_SEARCH]: {},
       [PermissionTypes.FILE_CITATIONS]: {},

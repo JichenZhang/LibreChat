@@ -5,6 +5,27 @@ const blobDownloadFilenames = new Map<string, string>();
 export const isHttpDownloadTarget = (target?: string | null): boolean =>
   /^https?:\/\//i.test(target ?? '');
 
+/** Only an owned, same-origin Garden handoff may use the JWT-backed file client. */
+export function getOwnedChatDownloadId(href: string, userId?: string): string | null {
+  if (!userId) return null;
+  try {
+    const url = new URL(href, window.location.origin);
+    if (url.origin !== window.location.origin || url.search || url.hash) return null;
+    const parts = url.pathname.split('/');
+    if (
+      parts.length !== 6 ||
+      parts[1] !== 'api' ||
+      parts[2] !== 'files' ||
+      parts[3] !== 'download' ||
+      parts[4] !== userId ||
+      !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(parts[5])
+    ) return null;
+    return parts[5];
+  } catch {
+    return null;
+  }
+}
+
 export function getDownloadFilename(
   fileName: string,
   fileId?: string,

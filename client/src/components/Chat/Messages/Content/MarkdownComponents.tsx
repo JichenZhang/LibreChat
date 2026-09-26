@@ -4,6 +4,7 @@ import { useToastContext } from '@librechat/client';
 import { PermissionTypes, Permissions, apiBaseUrl } from 'librechat-data-provider';
 import {
   handleDoubleClick,
+  getOwnedChatDownloadId,
   triggerDownload,
   resolveInlineMedia,
   toAbsoluteFilePath,
@@ -124,6 +125,10 @@ export const a: React.ElementType = memo(function MarkdownAnchor({ href, childre
     filename = '',
     filepath,
   } = useMemo(() => {
+    const ownedHandoffId = getOwnedChatDownloadId(href, user?.id);
+    if (ownedHandoffId) {
+      return { file_id: ownedHandoffId, filename: typeof children === 'string' ? children : ownedHandoffId, filepath: '' };
+    }
     const pattern = new RegExp(`(?:files|outputs)/${user?.id}/([^\\s]+)`);
     const match = href.match(pattern);
     if (match && match[0]) {
@@ -134,7 +139,7 @@ export const a: React.ElementType = memo(function MarkdownAnchor({ href, childre
       return { file_id, filename: name, filepath: path };
     }
     return { file_id: '', filename: '', filepath: '' };
-  }, [user?.id, href]);
+  }, [user?.id, href, children]);
 
   const { refetch: downloadFile } = useFileDownload(user?.id ?? '', file_id, { direct: false });
   const props: { target?: string; onClick?: React.MouseEventHandler } = { target: '_blank' };
@@ -173,7 +178,9 @@ export const a: React.ElementType = memo(function MarkdownAnchor({ href, childre
   return (
     <a
       href={
-        filepath?.startsWith('files/')
+        !filepath
+          ? href
+          : filepath.startsWith('files/')
           ? `${domainServerBaseUrl}/${filepath}`
           : `${domainServerBaseUrl}/files/${filepath}`
       }

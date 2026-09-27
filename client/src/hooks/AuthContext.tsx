@@ -47,6 +47,12 @@ if (import.meta.hot) {
   import.meta.hot.data.__AuthContext = AuthContext;
 }
 
+const isTransientRefreshFailure = (error: unknown): boolean => {
+  const responseStatus = (error as { response?: { status?: number } } | undefined)?.response
+    ?.status;
+  return responseStatus == null || [502, 503, 504].includes(responseStatus);
+};
+
 /** Client state belonging to the session that is ending. Drafts go out with the retained
  * deletions rather than being left to the next sign-in: a social sign-in returns through the
  * silent refresh and never passes the login mutation that clears them, and the browser tab keeps
@@ -67,6 +73,7 @@ const AuthContextProvider = ({
   children: ReactNode;
 }) => {
   const isExternalRedirectRef = useRef(false);
+  const refreshRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [user, setUser] = useRecoilState(store.user);
   const logoutRedirectRef = useRef<string | undefined>(undefined);
   const [token, setToken] = useState<string | undefined>(undefined);
@@ -210,6 +217,15 @@ const AuthContextProvider = ({
     loginUser.mutate(data);
   };
 
+  useEffect(
+    () => () => {
+      if (refreshRetryTimerRef.current != null) {
+        clearTimeout(refreshRetryTimerRef.current);
+      }
+    },
+    [],
+  );
+
   const silentRefresh = useCallback(() => {
     if (authConfig?.test === true) {
       return;
@@ -217,53 +233,68 @@ const AuthContextProvider = ({
     if (isExternalRedirectRef.current) {
       return;
     }
-    refreshToken.mutate(undefined, {
-      onSuccess: (data: t.TRefreshTokenResponse | undefined) => {
-        if (isExternalRedirectRef.current) {
-          return;
-        }
-        const { user, token = '' } = data ?? {};
-        if (token) {
-          const storedRedirect = sessionStorage.getItem(SESSION_KEY);
-          sessionStorage.removeItem(SESSION_KEY);
-          const baseUrl = apiBaseUrl();
-          const rawPath = window.location.pathname;
-          const strippedPath =
-            baseUrl && (rawPath === baseUrl || rawPath.startsWith(baseUrl + '/'))
-              ? rawPath.slice(baseUrl.length) || '/'
-              : rawPath;
-          const currentUrl = `${strippedPath}${window.location.search}`;
-          const fallbackRedirect = isSafeRedirect(currentUrl) ? currentUrl : '/c/new';
-          const redirect =
-            storedRedirect && isSafeRedirect(storedRedirect) ? storedRedirect : fallbackRedirect;
-          setUserContext({ user, token, isAuthenticated: true, redirect });
-          return;
-        }
-        console.log('Token is not present. User is not authenticated.');
-        endSessionClientState();
-        setIsAuthReady(true);
-        if (authConfig?.test === true) {
-          return;
-        }
-        if (authConfig?.optional !== true) {
-          navigate(buildLoginRedirectUrl());
-        }
-      },
-      onError: (error) => {
-        if (isExternalRedirectRef.current) {
-          return;
-        }
-        console.log('refreshToken mutation error:', error);
-        endSessionClientState();
-        setIsAuthReady(true);
-        if (authConfig?.test === true) {
-          return;
-        }
-        if (authConfig?.optional !== true) {
-          navigate(buildLoginRedirectUrl());
-        }
-      },
-    });
+    const attemptRefresh = (retriesRemaining: number) =>
+      refreshToken.mutate(undefined, {
+        onSuccess: (data: t.TRefreshTokenResponse | undefined) => {
+          if (isExternalRedirectRef.current) {
+            return;
+          }
+          const { user, token = '' } = data ?? {};
+          if (token) {
+            const storedRedirect = sessionStorage.getItem(SESSION_KEY);
+            sessionStorage.removeItem(SESSION_KEY);
+            const baseUrl = apiBaseUrl();
+            const rawPath = window.location.pathname;
+            const strippedPath =
+              baseUrl && (rawPath === baseUrl || rawPath.startsWith(baseUrl + '/'))
+                ? rawPath.slice(baseUrl.length) || '/'
+                : rawPath;
+            const currentUrl = `${strippedPath}${window.location.search}`;
+            const fallbackRedirect = isSafeRedirect(currentUrl) ? currentUrl : '/c/new';
+            const redirect =
+              storedRedirect && isSafeRedirect(storedRedirect) ? storedRedirect : fallbackRedirect;
+            setUserContext({ user, token, isAuthenticated: true, redirect });
+            return;
+          }
+          console.log('Token is not present. User is not authenticated.');
+          endSessionClientState();
+          setIsAuthReady(true);
+          if (authConfig?.test === true) {
+            return;
+          }
+          if (authConfig?.optional !== true) {
+            navigate(buildLoginRedirectUrl());
+          }
+        },
+        onError: (error) => {
+          if (isExternalRedirectRef.current) {
+            return;
+          }
+          if (
+            authConfig?.optional !== true &&
+            retriesRemaining > 0 &&
+            isTransientRefreshFailure(error)
+          ) {
+            refreshRetryTimerRef.current = setTimeout(() => {
+              refreshRetryTimerRef.current = null;
+              if (!isExternalRedirectRef.current) {
+                attemptRefresh(retriesRemaining - 1);
+              }
+            }, 1000);
+            return;
+          }
+          console.log('refreshToken mutation error:', error);
+          endSessionClientState();
+          setIsAuthReady(true);
+          if (authConfig?.test === true) {
+            return;
+          }
+          if (authConfig?.optional !== true) {
+            navigate(buildLoginRedirectUrl());
+          }
+        },
+      });
+    attemptRefresh(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- deps are stable at mount; adding refreshToken causes infinite re-fire
   }, []);
 

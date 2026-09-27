@@ -227,6 +227,11 @@ const startAuthRecovery = (retryRefresh?: boolean) => {
   return state.refreshPromise;
 };
 
+const isTransientRefreshFailure = (error: unknown): boolean => {
+  const status = (error as { response?: { status?: number } } | undefined)?.response?.status;
+  return status == null || [502, 503, 504].includes(status);
+};
+
 const redirectToLoginOnce = () => {
   if (isAuthRedirectInProgress()) {
     return;
@@ -324,8 +329,10 @@ async function _authenticatedFetch(url: string, options?: RequestInit): Promise<
   let refreshedToken: string | null;
   try {
     refreshedToken = await startAuthRecovery(false);
-  } catch {
-    redirectToLoginOnce();
+  } catch (error) {
+    if (!isTransientRefreshFailure(error)) {
+      redirectToLoginOnce();
+    }
     return response;
   }
 
@@ -405,11 +412,12 @@ if (typeof window !== 'undefined') {
 
           redirectToLoginOnce();
           return Promise.reject(error);
-        } catch {
-          /** A rejected refresh (stale/invalid session → 401/403) must route to
-           *  login just like an empty-token refresh, otherwise the original 401
-           *  surfaces to the caller (e.g. the share fork button) with no redirect. */
-          redirectToLoginOnce();
+        } catch (refreshError) {
+          /** Keep a transient network/provider failure recoverable on a later request.
+           * Confirmed invalid sessions still go to login, including share forks. */
+          if (!isTransientRefreshFailure(refreshError)) {
+            redirectToLoginOnce();
+          }
           return Promise.reject(error);
         }
       }

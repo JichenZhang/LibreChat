@@ -391,6 +391,58 @@ describe('axios 401 interceptor — Authorization header guard', () => {
     expect(window.location.href).toBe('/login?redirect_to=%2Fshare%2Fabc123');
   });
 
+  it('keeps a regular page available after transient refresh failure and recovers on the next request', async () => {
+    setTokenHeader('expired-token');
+    const hrefWrites = setTrackedWindowLocation({
+      href: 'http://localhost/c/retry',
+      pathname: '/c/retry',
+      search: '',
+      hash: '',
+    });
+    let refreshCalls = 0;
+    let messageCalls = 0;
+    mockAdapter.mockImplementation((config: InternalAxiosRequestConfig) => {
+      if (config.url?.includes('/api/auth/refresh') === true) {
+        refreshCalls++;
+        return refreshCalls === 1
+          ? Promise.reject({ response: { status: 503 }, config })
+          : createAdapterResponse(config, { token: 'fresh-token' });
+      }
+      messageCalls++;
+      return messageCalls < 3
+        ? create401Error(config)
+        : createAdapterResponse(config, { ok: true });
+    });
+
+    await expect(axios.get('/api/messages')).rejects.toMatchObject({ response: { status: 401 } });
+    expect(hrefWrites).toEqual([]);
+    expect(getCallsForUrl('/api/auth/refresh')).toHaveLength(1);
+
+    await expect(axios.get('/api/messages')).resolves.toMatchObject({ data: { ok: true } });
+    expect(getCallsForUrl('/api/auth/refresh')).toHaveLength(2);
+    expect(hrefWrites).toEqual([]);
+  });
+
+  it('does not redirect when refresh fails without an HTTP response', async () => {
+    setTokenHeader('expired-token');
+    const hrefWrites = setTrackedWindowLocation({
+      href: 'http://localhost/c/retry',
+      pathname: '/c/retry',
+      search: '',
+      hash: '',
+    });
+    mockAdapter.mockImplementation((config: InternalAxiosRequestConfig) =>
+      config.url?.includes('/api/auth/refresh') === true
+        ? Promise.reject(new Error('Network Error'))
+        : create401Error(config),
+    );
+
+    await expect(axios.get('/api/messages')).rejects.toMatchObject({ response: { status: 401 } });
+
+    expect(getCallsForUrl('/api/auth/refresh')).toHaveLength(1);
+    expect(hrefWrites).toEqual([]);
+  });
+
   it('redirects to login with redirect_to when authenticated and refresh returns no token on share page', async () => {
     expect.assertions(1);
     setTokenHeader('some-token');
@@ -756,6 +808,46 @@ describe('axios 401 interceptor — Authorization header guard', () => {
     const retriedHeaders = new Headers(fetchSpy.mock.calls[1][1]?.headers);
     expect(firstHeaders.get('Authorization')).toBe('Bearer expired-token');
     expect(retriedHeaders.get('Authorization')).toBe('Bearer fresh-token');
+  });
+
+  it('returns an authenticated fetch 401 without login redirect after transient refresh failure', async () => {
+    setTokenHeader('expired-token');
+    const hrefWrites = setTrackedWindowLocation({
+      href: 'http://localhost/c/retry',
+      pathname: '/c/retry',
+      search: '',
+      hash: '',
+    });
+    mockAdapter.mockImplementation((config: InternalAxiosRequestConfig) =>
+      Promise.reject({ response: { status: 503 }, config }),
+    );
+    jest.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(null, { status: 401 }));
+
+    const response = await dataRequest.authenticatedFetch('/api/files');
+
+    expect(response.status).toBe(401);
+    expect(getCallsForUrl('/api/auth/refresh')).toHaveLength(1);
+    expect(hrefWrites).toEqual([]);
+  });
+
+  it('redirects an authenticated fetch after a definitively invalid refresh session', async () => {
+    setTokenHeader('expired-token');
+    const hrefWrites = setTrackedWindowLocation({
+      href: 'http://localhost/c/retry',
+      pathname: '/c/retry',
+      search: '',
+      hash: '',
+    });
+    mockAdapter.mockImplementation((config: InternalAxiosRequestConfig) =>
+      Promise.reject({ response: { status: 403 }, config }),
+    );
+    jest.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(null, { status: 401 }));
+
+    const response = await dataRequest.authenticatedFetch('/api/files');
+
+    expect(response.status).toBe(401);
+    expect(getCallsForUrl('/api/auth/refresh')).toHaveLength(1);
+    expect(hrefWrites).toEqual(['/login?redirect_to=%2Fc%2Fretry']);
   });
 
   it('does not wait on the in-flight recovery when the refresh request itself fails', async () => {

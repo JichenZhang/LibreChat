@@ -1207,6 +1207,47 @@ describe('refreshController – OpenID path', () => {
     expectOpenIDRefreshGrant();
   });
 
+  it('returns a retryable response when the post-15-minute OpenID grant has a transport failure', async () => {
+    setOpenIDReuseCookies();
+    req.session = {
+      openidTokens: {
+        accessToken: 'session-access-token',
+        idToken: makeSessionToken(),
+        refreshToken: 'stored-refresh',
+        lastRefreshedAt: Date.now() - 18 * 60 * 1000,
+      },
+    };
+    openIdClient.refreshTokenGrant.mockRejectedValue(
+      Object.assign(new Error('connection reset'), { code: 'ECONNRESET' }),
+    );
+
+    await refreshController(req, res);
+
+    expect(openIdClient.refreshTokenGrant).toHaveBeenCalled();
+    expect(clearOpenIDAuthTokens).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(res.send).toHaveBeenCalledWith({ code: 'OPENID_REFRESH_TEMPORARY_UNAVAILABLE' });
+  });
+
+  it('keeps a rejected post-15-minute OpenID grant invalid', async () => {
+    setOpenIDReuseCookies();
+    req.session = {
+      openidTokens: {
+        accessToken: 'session-access-token',
+        idToken: makeSessionToken(),
+        refreshToken: 'stored-refresh',
+        lastRefreshedAt: Date.now() - 18 * 60 * 1000,
+      },
+    };
+    openIdClient.refreshTokenGrant.mockRejectedValue(new Error('invalid_grant'));
+
+    await refreshController(req, res);
+
+    expect(openIdClient.refreshTokenGrant).toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.send).toHaveBeenCalledWith('Invalid OpenID refresh token');
+  });
+
   it('falls through to full OpenID refresh when session refresh timestamp is in the future', async () => {
     setOpenIDReuseCookies();
     req.session = {

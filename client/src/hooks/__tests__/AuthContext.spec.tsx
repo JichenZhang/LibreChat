@@ -452,6 +452,82 @@ describe('AuthContextProvider — silentRefresh post-login redirect', () => {
   });
 });
 
+describe('AuthContextProvider — mandatory cold-load refresh', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.useFakeTimers();
+    window.history.replaceState({}, '', '/c/new');
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    window.history.replaceState({}, '', '/');
+  });
+
+  it('recovers after one transient network rejection without sending the employee to login', () => {
+    const { getByTestId } = renderProviderLive();
+    const [, firstAttempt] = mockRefreshMutate.mock.calls[0] as [
+      unknown,
+      { onError: (error: unknown) => void },
+    ];
+
+    act(() => firstAttempt.onError(new Error('Network Error')));
+
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(getByTestId('consumer')).toHaveAttribute('data-auth-ready', 'false');
+
+    act(() => jest.advanceTimersByTime(1000));
+    expect(mockRefreshMutate).toHaveBeenCalledTimes(2);
+    const [, secondAttempt] = mockRefreshMutate.mock.calls[1] as [
+      unknown,
+      { onSuccess: (data: unknown) => void },
+    ];
+    act(() => secondAttempt.onSuccess({ user: { id: '1', role: 'USER' }, token: 'test-token' }));
+    act(() => jest.advanceTimersByTime(100));
+
+    expect(getByTestId('consumer')).toHaveAttribute('data-authenticated', 'true');
+    expect(mockNavigate).not.toHaveBeenCalledWith(expect.stringContaining('/login'));
+  });
+
+  it('ends a bounded retry when a second transient refresh fails', () => {
+    const { getByTestId } = renderProviderLive();
+    const [, firstAttempt] = mockRefreshMutate.mock.calls[0] as [
+      unknown,
+      { onError: (error: unknown) => void },
+    ];
+
+    act(() => firstAttempt.onError(new Error('Network Error')));
+    act(() => jest.advanceTimersByTime(1000));
+    const [, secondAttempt] = mockRefreshMutate.mock.calls[1] as [
+      unknown,
+      { onError: (error: unknown) => void },
+    ];
+    act(() => secondAttempt.onError(new Error('Network Error')));
+    act(() => jest.advanceTimersByTime(30_000));
+
+    expect(mockRefreshMutate).toHaveBeenCalledTimes(2);
+    expect(getByTestId('consumer')).toHaveAttribute('data-auth-ready', 'true');
+    expect(mockNavigate).toHaveBeenCalledWith(expect.stringContaining('/login'));
+  });
+
+  it.each([401, 403])(
+    'redirects a definitively invalid refresh session (%s) without retrying',
+    (status) => {
+      renderProviderLive();
+      const [, firstAttempt] = mockRefreshMutate.mock.calls[0] as [
+        unknown,
+        { onError: (error: unknown) => void },
+      ];
+
+      act(() => firstAttempt.onError({ response: { status } }));
+      act(() => jest.advanceTimersByTime(1000));
+
+      expect(mockRefreshMutate).toHaveBeenCalledTimes(1);
+      expect(mockNavigate).toHaveBeenCalledWith(expect.stringContaining('/login'));
+    },
+  );
+});
+
 describe('AuthContextProvider — optional authentication', () => {
   beforeEach(() => {
     jest.clearAllMocks();

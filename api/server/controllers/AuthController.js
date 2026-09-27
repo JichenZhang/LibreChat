@@ -176,6 +176,22 @@ const isInvalidGrantError = (error) => {
   );
 };
 
+const isTransientOpenIDRefreshError = (error) => {
+  if (
+    isInvalidGrantError(error) ||
+    isOpenIDRefreshOwnershipError(error) ||
+    isOpenIDSessionMissingError(error)
+  ) {
+    return false;
+  }
+  const code = error?.code;
+  const status = error?.status ?? error?.response?.status;
+  return (
+    ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN'].includes(code) ||
+    [502, 503, 504].includes(status)
+  );
+};
+
 const getAuthIdentitySource = (user) =>
   typeof user?.toObject === 'function' ? user.toObject() : user;
 
@@ -607,6 +623,9 @@ const refreshController = async (req, res) => {
         }
       }
 
+      if (isTransientOpenIDRefreshError(error)) {
+        return res.status(503).send({ code: 'OPENID_REFRESH_TEMPORARY_UNAVAILABLE' });
+      }
       return res.status(403).send('Invalid OpenID refresh token');
     }
   }

@@ -3944,6 +3944,16 @@ describe('AgentClient - titleConvo', () => {
       expect(generateTitleCall.clientOptions.model).toBe('gpt-3.5-turbo');
     });
 
+    it('uses a non-streaming client for titles without changing chat options', async () => {
+      client.options.streaming = true;
+
+      await client.titleConvo({ text: 'Test conversation', abortController: new AbortController() });
+
+      const generateTitleCall = mockRun.generateTitle.mock.calls[0][0];
+      expect(generateTitleCall.clientOptions.streaming).toBe(false);
+      expect(client.options.streaming).toBe(true);
+    });
+
     it('preserves Anthropic custom headers on title requests despite omitTitleOptions', async () => {
       const prevKey = process.env.ANTHROPIC_API_KEY;
       process.env.ANTHROPIC_API_KEY = 'sk-ant-test';

@@ -6063,6 +6063,10 @@ class AgentClient extends BaseClient {
         Object.entries(clientOptions).filter(([key]) => !omitTitleOptions.has(key)),
       ),
     );
+    // Title generation uses a single response. Some OpenAI-compatible gateways
+    // leave the streamed title request open, causing the 45-second title timeout.
+    // Keep normal chat streaming intact by overriding only this title client.
+    clientOptions.streaming = false;
 
     if (anthropicClientOptions?.defaultHeaders != null && clientOptions.clientOptions == null) {
       clientOptions.clientOptions = anthropicClientOptions;

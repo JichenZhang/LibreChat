@@ -42,6 +42,7 @@ let mockCapturedLogoutOptions: {
 };
 
 const mockRefreshMutate = jest.fn();
+const mockGetUserQuery = jest.fn();
 
 jest.mock('~/data-provider', () => ({
   useLoginUserMutation: jest.fn(
@@ -63,14 +64,14 @@ jest.mock('~/data-provider', () => ({
     },
   ),
   useRefreshTokenMutation: jest.fn(() => ({ mutate: mockRefreshMutate })),
-  useGetUserQuery: jest.fn(() => ({
-    data: undefined,
-    isError: false,
-    error: null,
-  })),
+  useGetUserQuery: (config: unknown) => mockGetUserQuery(config),
   useGetRole: jest.fn(() => ({ data: null })),
   useListRoles: jest.fn(() => ({ data: undefined })),
 }));
+
+beforeEach(() => {
+  mockGetUserQuery.mockReturnValue({ data: undefined, isError: false, error: null });
+});
 
 const authConfig: TAuthConfig = { loginRedirect: '/login', test: true };
 
@@ -81,6 +82,7 @@ function TestConsumer() {
       data-testid="consumer"
       data-authenticated={ctx.isAuthenticated}
       data-auth-ready={ctx.isAuthReady}
+      data-user-id={ctx.user?.id ?? ''}
       data-error={ctx.error ?? ''}
       data-roles={JSON.stringify(ctx.roles ?? {})}
     />
@@ -526,6 +528,77 @@ describe('AuthContextProvider — mandatory cold-load refresh', () => {
       expect(mockNavigate).toHaveBeenCalledWith(expect.stringContaining('/login'));
     },
   );
+
+  it('keeps a refreshed session after a transient profile failure and accepts its recovery', () => {
+    const profileError = new Error('Network Error');
+    mockGetUserQuery.mockImplementation((config: { enabled: boolean }) => ({
+      data: undefined,
+      isError: config.enabled,
+      error: config.enabled ? profileError : null,
+    }));
+    const { getByTestId } = renderProviderLive();
+    const [, refreshOptions] = mockRefreshMutate.mock.calls[0] as [
+      unknown,
+      { onSuccess: (data: unknown) => void },
+    ];
+
+    act(() => refreshOptions.onSuccess({ user: { id: '1', role: 'USER' }, token: 'test-token' }));
+    act(() => jest.advanceTimersByTime(100));
+
+    const profileOptions = mockGetUserQuery.mock.lastCall?.[0] as {
+      retry: (failureCount: number, error: unknown) => boolean;
+    };
+    expect(profileOptions.retry(0, profileError)).toBe(true);
+    expect(profileOptions.retry(0, { response: { status: 503 } })).toBe(true);
+    expect(profileOptions.retry(1, profileError)).toBe(false);
+    expect(profileOptions.retry(0, { response: { status: 401 } })).toBe(false);
+    expect(getByTestId('consumer')).toHaveAttribute('data-authenticated', 'true');
+    expect(getByTestId('consumer')).toHaveAttribute('data-user-id', '1');
+    expect(mockNavigate).not.toHaveBeenCalledWith(
+      expect.stringContaining('/login'),
+      expect.anything(),
+    );
+    expect(mockRefreshMutate).toHaveBeenCalledTimes(1);
+
+    const recoveredUser = { id: '2', role: 'USER' };
+    mockGetUserQuery.mockImplementation(() => ({
+      data: recoveredUser,
+      isError: false,
+      error: null,
+    }));
+    act(() => window.dispatchEvent(new CustomEvent('tokenUpdated', { detail: 'renewed-token' })));
+    act(() => jest.advanceTimersByTime(100));
+
+    expect(getByTestId('consumer')).toHaveAttribute('data-user-id', '2');
+    expect(getByTestId('consumer')).toHaveAttribute('data-authenticated', 'true');
+    expect(mockNavigate).not.toHaveBeenCalledWith(
+      expect.stringContaining('/login'),
+      expect.anything(),
+    );
+  });
+
+  it.each([401, 403])('redirects after a revoked profile response (%s)', (status) => {
+    const profileError = { message: 'Session invalid', response: { status } };
+    mockGetUserQuery.mockImplementation((config: { enabled: boolean }) => ({
+      data: undefined,
+      isError: config.enabled,
+      error: config.enabled ? profileError : null,
+    }));
+    renderProviderLive();
+    const [, refreshOptions] = mockRefreshMutate.mock.calls[0] as [
+      unknown,
+      { onSuccess: (data: unknown) => void },
+    ];
+
+    act(() => refreshOptions.onSuccess({ user: { id: '1', role: 'USER' }, token: 'test-token' }));
+    act(() => jest.advanceTimersByTime(100));
+
+    const profileOptions = mockGetUserQuery.mock.lastCall?.[0] as {
+      retry: (failureCount: number, error: unknown) => boolean;
+    };
+    expect(profileOptions.retry(0, { response: { status } })).toBe(false);
+    expect(mockNavigate).toHaveBeenCalledWith(expect.stringContaining('/login'), { replace: true });
+  });
 });
 
 describe('AuthContextProvider — optional authentication', () => {

@@ -47,7 +47,7 @@ if (import.meta.hot) {
   import.meta.hot.data.__AuthContext = AuthContext;
 }
 
-const isTransientRefreshFailure = (error: unknown): boolean => {
+const isTransientAuthRequestFailure = (error: unknown): boolean => {
   const responseStatus = (error as { response?: { status?: number } } | undefined)?.response
     ?.status;
   return responseStatus == null || [502, 503, 504].includes(responseStatus);
@@ -211,7 +211,11 @@ const AuthContextProvider = ({
     [logoutUser],
   );
 
-  const userQuery = useGetUserQuery({ enabled: !!(token ?? '') });
+  const userQuery = useGetUserQuery({
+    enabled: !!(token ?? ''),
+    retry: (failureCount, queryError) =>
+      failureCount < 1 && isTransientAuthRequestFailure(queryError),
+  });
 
   const login = (data: t.TLoginUser) => {
     loginUser.mutate(data);
@@ -273,7 +277,7 @@ const AuthContextProvider = ({
           if (
             authConfig?.optional !== true &&
             retriesRemaining > 0 &&
-            isTransientRefreshFailure(error)
+            isTransientAuthRequestFailure(error)
           ) {
             refreshRetryTimerRef.current = setTimeout(() => {
               refreshRetryTimerRef.current = null;
@@ -304,7 +308,12 @@ const AuthContextProvider = ({
     }
     if (userQuery.data) {
       setUser(userQuery.data);
-    } else if (userQuery.isError) {
+    } else if (
+      userQuery.isError &&
+      [401, 403].includes(
+        (userQuery.error as { response?: { status?: number } } | undefined)?.response?.status ?? 0,
+      )
+    ) {
       endSessionClientState();
       doSetError((userQuery.error as Error).message);
       setIsAuthReady(true);

@@ -57,6 +57,7 @@ import type {
 import type { LCAvailableTools, RequestScopedMCPConnectionStore } from '../mcp/types';
 import type { ContentTraversalLimitError } from '../protection/adapters/nested';
 import type { SkillContentInput } from '../protection/adapters/submissions';
+import type { RepositoryInstructionSource } from '../code/instructions';
 import type { TextContentFragment } from '../protection/types';
 import type { CheckAccessParams } from '../middleware/access';
 import type { MCPToolAlias } from '~/tools/classification';
@@ -861,6 +862,7 @@ export interface InitializeAgentParams {
     primedCodeFiles?: import('@librechat/agents').CodeEnvFile[];
     /** Live workspace binding resolved by the execution-side loader. */
     codeExecutionContext?: CodeExecutionContext;
+    repositoryInstructionSource?: RepositoryInstructionSource;
   } | null>;
   /** Endpoint option (contains model_parameters and endpoint info) */
   endpointOption?: Partial<TEndpointOption>;
@@ -1519,6 +1521,10 @@ export async function initializeAgent(
      * references no files to the whole conversation would provision a sibling branch's
      * attachments, sending files this branch never mentioned to the Code API or RAG. */
     const provisionFileIds = threadAnchor == null ? fileIds : (threadFileIds ?? []);
+    /* Conversation.files can omit a previous turn's embedded upload. Follow the same
+     * parent chain for provisioned tool files so search restores it without loading a
+     * sibling branch; unanchored continuations retain the conversation-level list. */
+    const replayToolFileIds = needsThreadWalk ? (threadFileIds ?? []) : fileIds;
 
     /**
      * Retrieve execute_code files filtered to the current thread.
@@ -1536,9 +1542,11 @@ export async function initializeAgent(
      * three, and this runs on the agent initialization path. */
     const [toolFiles, codeGeneratedFiles, userCodeFiles, deferredFiles] = await Promise.all([
       resendFiles && requestFileOwnerScope
-        ? (db.getToolFilesByIds(fileIds, toolResourceSet, requestFileOwnerScope) as Promise<
-            IMongoFile[]
-          >)
+        ? (db.getToolFilesByIds(
+            replayToolFileIds,
+            toolResourceSet,
+            requestFileOwnerScope,
+          ) as Promise<IMongoFile[]>)
         : ([] as IMongoFile[]),
       resendFiles && wantsCodeFiles && db.getCodeGeneratedFiles && requestFileOwnerScope
         ? (db.getCodeGeneratedFiles(
@@ -1964,6 +1972,7 @@ export async function initializeAgent(
     tools: structuredTools,
     primedCodeFiles,
     codeExecutionContext: loadedCodeExecutionContext,
+    repositoryInstructionSource,
   } = loadToolsResult ?? {
     tools: [],
     toolContextMap: {},
@@ -1979,6 +1988,7 @@ export async function initializeAgent(
     oauthActionToolNames: undefined,
     primedCodeFiles: undefined,
     codeExecutionContext: undefined,
+    repositoryInstructionSource: undefined,
   };
   const trustedCodeExecutionContext = loadedCodeExecutionContext ?? codeExecutionContext;
   const attachedWorkspaceOperations =
@@ -1989,6 +1999,7 @@ export async function initializeAgent(
     trustedCodeExecutionContext.environmentType === 'attached'
       ? resolveAttachedWorkspaceCommandTimeoutMax(
           trustedCodeExecutionContext.codeEnvironmentConfigSchema,
+          trustedCodeExecutionContext.codeWorkspace?.maxCommandTimeoutMs,
         )
       : undefined;
   if (
@@ -2075,6 +2086,7 @@ export async function initializeAgent(
       workspaceOperations: attachedWorkspaceOperations,
       workspaceCommandTimeoutMaxMs: attachedWorkspaceCommandTimeoutMaxMs,
       workspaceEnvironment: trustedCodeExecutionContext.codeWorkspace?.environment,
+      workspaceLinkedWorktrees: trustedCodeExecutionContext.codeWorkspace?.linkedWorktrees,
     });
     toolDefinitions = codeExecResult.toolDefinitions;
     recordCapabilityToolNames(AgentCapabilities.execute_code, codeExecResult.toolNames);
@@ -2261,6 +2273,25 @@ export async function initializeAgent(
     }
   }
 
+  const repositoryInstructionBlock = repositoryInstructionSource
+    ? await repositoryInstructionSource.load({
+        ...repositoryInstructionSource,
+        mode: agent.repositoryInstructions,
+        signal: params.signal,
+        timeoutMs: appConfig?.endpoints?.agents?.repositoryInstructions?.timeoutMs,
+        assertContent: (content) =>
+          assertModelBoundContent({
+            filters: appConfig?.filters,
+            agents: [{ instructions: content }],
+          }),
+      })
+    : undefined;
+  if (repositoryInstructionBlock) {
+    agent.instructions = [agent.instructions, repositoryInstructionBlock]
+      .filter(Boolean)
+      .join('\n\n');
+  }
+
   if (typeof agent.artifacts === 'string' && agent.artifacts !== '') {
     const artifactsPromptResult = generateArtifactsPrompt({
       endpoint: agent.provider,
@@ -2279,12 +2310,19 @@ export async function initializeAgent(
   let executableSkillIds = params.accessibleSkillIds;
   let activeSkillNames: Set<string> | undefined;
   const { accessibleSkillIds } = params;
-  if (accessibleSkillIds && accessibleSkillIds.length > 0) {
+  /**
+   * Authoring runs go through catalog injection even with nothing accessible:
+   * `injectSkillCatalog` owns the `skill` tool registration, and a model that
+   * can write `skills/{skillName}/SKILL.md` needs the tool bound at init to
+   * invoke what it creates later in the same conversation.
+   */
+  if ((accessibleSkillIds && accessibleSkillIds.length > 0) || skillAuthoringAvailable) {
     const skillResult = await injectSkillCatalog({
       agent,
       toolDefinitions,
       toolRegistry,
-      accessibleSkillIds,
+      accessibleSkillIds: accessibleSkillIds ?? [],
+      skillAuthoringAvailable,
       contextWindowTokens: Number(agentMaxContextTokens) || 200_000,
       listSkillsByAccess: db?.listSkillsByAccess,
       codeEnvAvailable: effectiveCodeEnvAvailable,
@@ -2294,6 +2332,7 @@ export async function initializeAgent(
       userId: user?.id,
       workspaceCommandTimeoutMaxMs: attachedWorkspaceCommandTimeoutMaxMs,
       workspaceEnvironment: trustedCodeExecutionContext.codeWorkspace?.environment,
+      workspaceLinkedWorktrees: trustedCodeExecutionContext.codeWorkspace?.linkedWorktrees,
       skillStates: params.skillStates,
       defaultActiveOnShare: params.defaultActiveOnShare,
       maxCatalogSkills: getMaxCatalogSkills(runtime),

@@ -1,14 +1,23 @@
 const express = require('express');
 const request = require('supertest');
 const { Readable } = require('node:stream');
-const { FileSources, ResourceType, PermissionBits } = require('librechat-data-provider');
+const {
+  FileContext,
+  FileSources,
+  ResourceType,
+  PermissionBits,
+} = require('librechat-data-provider');
 
 jest.mock('@librechat/data-schemas', () => ({
   logger: { warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 jest.mock('@librechat/api', () => ({
   resolveDownloadPath: (file) => file.filepath,
+  ...jest.requireActual('../../../packages/api/src/files/workspaceAttachment'),
   AccessControlService: jest.fn(),
+}));
+jest.mock('~/server/services/Files/retention', () => ({
+  getRetentionExpiry: jest.fn().mockResolvedValue({}),
 }));
 jest.mock('~/server/middleware/config/app', () => (req, _res, next) => {
   req.config = { paths: { uploads: '/app/uploads' } };
@@ -33,6 +42,7 @@ jest.mock('~/server/services/Endpoints/agents/skillDeps', () => ({
 }));
 
 const db = require('~/models');
+const { logger } = require('@librechat/data-schemas');
 const { findAccessibleResources } = require('~/server/services/PermissionService');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const {
@@ -191,6 +201,7 @@ describe('Garden native Workspace file adapter', () => {
       expect.objectContaining({
         user: 'u1',
         source: FileSources.local,
+        context: FileContext.message_attachment,
         filename: 'report.zip',
         bytes: binary.length,
       }),
@@ -203,5 +214,30 @@ describe('Garden native Workspace file adapter', () => {
       .set('Content-Type', 'application/octet-stream')
       .send(binary)
       .expect(400);
+  });
+
+  it('keeps registration failure and safely reports failed cleanup', async () => {
+    const registrationError = new Error('private record detail');
+    db.createFile.mockRejectedValueOnce(registrationError);
+    const strategy = getStrategyFunctions();
+    strategy.deleteFile.mockRejectedValueOnce(new Error('private cleanup detail'));
+    getStrategyFunctions.mockReturnValue(strategy);
+
+    await request(app)
+      .post('/api/garden/workspace/outputs?filename=report.zip')
+      .set(auth())
+      .set('Content-Type', 'application/octet-stream')
+      .send(binary)
+      .expect(503);
+
+    expect(strategy.deleteFile).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ user: 'u1', filepath: '/uploads/u1/stored-report.zip' }),
+    );
+    expect(logger.warn).toHaveBeenCalledWith('[gardenWorkspace] File handoff failed', {
+      stage: 'registration',
+      cleanup: 'failed',
+    });
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('private');
   });
 });

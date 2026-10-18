@@ -10,6 +10,7 @@ const {
   ResourceType,
   AccessRoleIds,
   PrincipalType,
+  FileContext,
   FileSources,
 } = require('librechat-data-provider');
 const { createAgent, createFile } = require('~/models');
@@ -73,7 +74,7 @@ jest.mock('~/config', () => ({
 
 const { processDeleteRequest } = require('~/server/services/Files/process');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
-const { createCodeExecutionRouteKey } = require('@librechat/api');
+const { createCodeExecutionRouteKey, publishWorkspaceAttachment } = require('@librechat/api');
 
 // Import the router after mocks
 const router = require('./files');
@@ -1128,6 +1129,61 @@ describe('File Routes - Delete with Agent Access', () => {
   });
 
   describe('GET /files/download/:userId/:file_id', () => {
+    it('downloads consecutive Workspace attachments through native ownership checks', async () => {
+      const owner = otherUserId.toString();
+      const stored = new Map();
+      const saveBuffer = jest.fn(async ({ buffer, fileName }) => {
+        const filepath = `/uploads/${owner}/${fileName}`;
+        stored.set(filepath, buffer);
+        return filepath;
+      });
+      getStrategyFunctions.mockReturnValue({
+        getDownloadStream: async (_req, filepath) => Readable.from([stored.get(filepath)]),
+      });
+      const dependencies = {
+        saveBuffer,
+        createFile: methods.createFile,
+        getRetentionExpiry: async () => ({}),
+        getMimeType: () => 'application/octet-stream',
+      };
+      const legacyId = uuidv4();
+      const legacyPath = `/uploads/${owner}/legacy.docx`;
+      const legacyBytes = Buffer.from('previous successful Workspace result');
+      stored.set(legacyPath, legacyBytes);
+      await File.create({
+        user: otherUserId,
+        file_id: legacyId,
+        filename: 'legacy.docx',
+        filepath: legacyPath,
+        bytes: legacyBytes.length,
+        type: 'application/octet-stream',
+        source: FileSources.local,
+        context: FileContext.run_artifact,
+      });
+      const input = { filename: 'same.docx', userId: owner, maxBytes: 10_000 };
+      const firstBytes = Buffer.from('first Workspace result');
+      const secondBytes = Buffer.from('second Workspace result');
+      const first = await publishWorkspaceAttachment({ ...input, bytes: firstBytes }, dependencies);
+      const second = await publishWorkspaceAttachment(
+        { ...input, bytes: secondBytes },
+        dependencies,
+      );
+
+      expect(first.file_id).not.toBe(second.file_id);
+      const firstDownload = await request(app).get(`/files/download/${owner}/${first.file_id}`);
+      const secondDownload = await request(app).get(`/files/download/${owner}/${second.file_id}`);
+      const legacyDownload = await request(app).get(`/files/download/${owner}/${legacyId}`);
+      expect(firstDownload.status).toBe(200);
+      expect(secondDownload.status).toBe(200);
+      expect(legacyDownload.status).toBe(200);
+      expect(firstDownload.body).toEqual(firstBytes);
+      expect(secondDownload.body).toEqual(secondBytes);
+      expect(legacyDownload.body).toEqual(legacyBytes);
+
+      otherUserId = authorId;
+      await request(app).get(`/files/download/${owner}/${first.file_id}`).expect(403);
+    });
+
     it('streams proxied downloads by default when a direct URL is available', async () => {
       const userFileId = uuidv4();
       const getDownloadURL = jest.fn().mockResolvedValue('https://cdn.example.com/file.pdf?signed');

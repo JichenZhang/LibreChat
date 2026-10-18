@@ -2,18 +2,18 @@ const crypto = require('node:crypto');
 const express = require('express');
 const mime = require('mime');
 const { logger } = require('@librechat/data-schemas');
+const { FileSources, PermissionBits, ResourceType } = require('librechat-data-provider');
 const {
-  FileContext,
-  FileSources,
-  PermissionBits,
-  ResourceType,
-} = require('librechat-data-provider');
-const { resolveDownloadPath } = require('@librechat/api');
+  resolveDownloadPath,
+  publishWorkspaceAttachment,
+  WorkspaceHandoffError,
+} = require('@librechat/api');
 const configMiddleware = require('~/server/middleware/config/app');
 const db = require('~/models');
 const { fileAccess } = require('~/server/middleware/accessResources/fileAccess');
 const { findAccessibleResources } = require('~/server/services/PermissionService');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
+const { getRetentionExpiry } = require('~/server/services/Files/retention');
 const {
   getSkillDbMethods,
   getSkillToolDeps,
@@ -146,42 +146,23 @@ router.post(
   '/outputs',
   express.raw({ type: 'application/octet-stream', limit: MAX_BYTES }),
   async (req, res) => {
-    const bytes = req.body;
-    const filename = req.query.filename;
-    if (
-      !Buffer.isBuffer(bytes) ||
-      !bytes.length ||
-      typeof filename !== 'string' ||
-      !/^[^/\\\x00-\x1f]{1,255}$/.test(filename) ||
-      filename === '.' ||
-      filename === '..'
-    )
-      return res.sendStatus(400);
-    const fileId = crypto.randomUUID();
     const strategy = getStrategyFunctions(FileSources.local);
-    if (!strategy.saveBuffer) return res.sendStatus(503);
-    let filepath;
     try {
-      filepath = await strategy.saveBuffer({
-        userId: req.user.id,
-        buffer: bytes,
-        fileName: `${fileId}__${filename}`,
-        basePath: 'uploads',
-      });
-      const file = await db.createFile(
+      const file = await publishWorkspaceAttachment(
         {
-          file_id: fileId,
-          user: req.user.id,
+          bytes: req.body,
+          filename: req.query.filename,
+          userId: req.user.id,
           tenantId: req.user.tenantId,
-          filename,
-          filepath,
-          source: FileSources.local,
-          context: FileContext.run_artifact,
-          type: mime.getType(filename) || 'application/octet-stream',
-          bytes: bytes.length,
-          usage: 1,
+          maxBytes: MAX_BYTES,
         },
-        true,
+        {
+          saveBuffer: strategy.saveBuffer,
+          createFile: db.createFile,
+          deleteFile: strategy.deleteFile && ((file) => strategy.deleteFile(req, file)),
+          getRetentionExpiry: () => getRetentionExpiry(req),
+          getMimeType: (filename) => mime.getType(filename),
+        },
       );
       return res
         .status(201)
@@ -192,8 +173,14 @@ router.post(
           download_path: `/api/files/download/${req.user.id}/${file.file_id}`,
         });
     } catch (error) {
-      if (filepath && strategy.deleteFile) {
-        await strategy.deleteFile(req, { filepath, user: req.user.id }).catch(() => undefined);
+      if (error instanceof WorkspaceHandoffError) {
+        if (error.status !== 400) {
+          logger.warn('[gardenWorkspace] File handoff failed', {
+            stage: error.stage,
+            cleanup: error.cleanup,
+          });
+        }
+        return res.sendStatus(error.status);
       }
       return binaryFailure(res, error);
     }

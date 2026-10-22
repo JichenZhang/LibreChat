@@ -34,6 +34,230 @@ const BaseClient = require('~/app/clients/BaseClient');
 const AgentClient = require('./client');
 const { resolveConfigServers } = require('~/server/services/MCP');
 
+async function initializeWorkspaceAgent(mockReq, id = 'primary-agent', requestFiles = []) {
+  const { initializeAgent } = jest.requireActual('@librechat/api');
+  const key = `workspace_execute${Constants.mcp_delimiter}workspace-mcp`;
+  const endpoint = 'SyntheticWorkspace';
+  mockReq.config.endpoints = {
+    custom: [
+      {
+        name: endpoint,
+        apiKey: 'synthetic-local-key',
+        baseURL: 'http://127.0.0.1:1/v1',
+        models: { default: ['fixture'], fetch: false },
+      },
+    ],
+  };
+  return initializeAgent(
+    {
+      req: mockReq,
+      res: {},
+      agent: { id, provider: endpoint, model: 'fixture', tools: [key] },
+      loadTools: async () => ({
+        tools: [],
+        toolDefinitions: [{ name: key, parameters: { type: 'object', properties: {} } }],
+        toolRegistry: new Map([[key, { name: key }]]),
+      }),
+      endpointOption: { endpoint: EModelEndpoint.agents },
+      allowedProviders: new Set([endpoint]),
+      isInitialAgent: true,
+      requestFiles,
+    },
+    {
+      getFiles: async () => requestFiles,
+      getConvoFiles: async () => [],
+      updateFilesUsage: async () => [],
+      getUserKey: async () => null,
+      getUserKeyValues: async () => ({}),
+      getToolFilesByIds: async () => [],
+    },
+  );
+}
+
+function installNativeWorkspacePreparation(
+  client,
+  mockReq,
+  requestFiles,
+  files,
+  allowedAgents = ['primary-agent'],
+  native = false,
+  { signal, beforeInvoke } = {},
+) {
+  const { createWorkspacePreparation } = jest.requireActual('@librechat/api');
+  const { DynamicStructuredTool } = require('@librechat/agents/langchain/tools');
+  const key = `workspace_execute${Constants.mcp_delimiter}workspace-mcp`;
+  const nas = new Set(['聊天上传/演示.pptx']);
+  const copies = new Map();
+  const contents = new Map([['聊天上传/演示.pptx', 'unrelated-original']]);
+  const calls = [];
+  const loads = [];
+  const invoke = async (name, args) => {
+    calls.push(name);
+    await beforeInvoke?.(name, args);
+    if (name.startsWith('workspace_list'))
+      return JSON.stringify({
+        ok: true,
+        entries: [...nas].map((path) => ({ name: path.split('/').pop(), type: 'regular' })),
+      });
+    if (nas.has(args.path)) return JSON.stringify({ ok: false, error: { code: 'CONFLICT' } });
+    nas.add(args.path);
+    contents.set(args.path, 'native-original');
+    return JSON.stringify({ ok: true });
+  };
+  if (native) {
+    require('~/config').getMCPManager.mockReturnValue({
+      formatInstructionsForContext: mockFormatInstructions,
+      callTool: async ({ toolName, toolArguments }) => [
+        await invoke(toolName, toolArguments),
+        undefined,
+      ],
+    });
+    mockReq.user.role = 'USER';
+    const { Permissions, PermissionTypes } = require('librechat-data-provider');
+    require('~/models').getRoleByName.mockResolvedValue({
+      permissions: { [PermissionTypes.MCP_SERVERS]: { [Permissions.USE]: true } },
+    });
+  }
+  const prepare = createWorkspacePreparation({
+    req: mockReq,
+    requestFiles: requestFiles ?? [],
+    signal,
+    conversationId: 'convo-123',
+    getContext: (id) =>
+      allowedAgents.includes(id) ? { toolRegistry: new Map([[key, { name: key }]]) } : undefined,
+    loadTools: jest.fn(async (keys) => {
+      loads.push(keys);
+      return {
+        loadedTools: await Promise.all(
+          keys.map((name) =>
+            native
+              ? jest.requireActual('~/server/services/MCP').createMCPTool({
+                  user: mockReq.user,
+                  provider: 'openai',
+                  toolKey: name,
+                  config: { type: 'stdio', command: 'unused-synthetic-transport' },
+                  availableTools: {
+                    [name]: {
+                      function: {
+                        name,
+                        description: name,
+                        parameters: { type: 'object', additionalProperties: true },
+                      },
+                    },
+                  },
+                })
+              : new DynamicStructuredTool({
+                  name,
+                  description: name,
+                  schema: { type: 'object', additionalProperties: true },
+                  func: (args) => invoke(name, args),
+                }),
+          ),
+        ),
+      };
+    }),
+    db: {
+      getFile: async ({ fileId }) =>
+        files.some((f) => f.file_id === fileId)
+          ? { metadata: { workspaceCopy: copies.get(fileId) } }
+          : null,
+      claim: async ({ fileId, path, claimId }) => {
+        if (copies.has(fileId)) return null;
+        copies.set(fileId, { path, claimId, status: 'claimed' });
+        return {};
+      },
+      advance: async ({ fileId, nextPath }) => {
+        copies.get(fileId).path = nextPath;
+        return {};
+      },
+      complete: async ({ fileId }) => {
+        copies.get(fileId).status = 'ready';
+        return {};
+      },
+      release: async ({ fileId }) => copies.delete(fileId),
+    },
+  });
+  client.options.prepareWorkspaceAttachments = prepare;
+  return { nas, copies, calls, contents, loads };
+}
+
+async function exerciseWorkspaceLazyCancellation(client, req, stage, runBoundary) {
+  const file = {
+    file_id: 'lazy-input',
+    filename: '演示.pptx',
+    user: 'user-123',
+    context: 'message_attachment',
+    source: 'local',
+    filepath: '/uploads/synthetic.pptx',
+    type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    bytes: 128,
+    llmDeliveryPath: 'none',
+  };
+  const parent = new AbortController();
+  const child = new AbortController();
+  const stopped = new Error('child cancelled');
+  let initialized;
+  const descriptor = {
+    id: 'lazy-cancel',
+    resolve: jest.fn(async () => {
+      initialized = await initializeWorkspaceAgent(req, 'lazy-cancel', [file]);
+      expect(initialized.currentRequestAttachments).toEqual([
+        expect.objectContaining({ file_id: file.file_id }),
+      ]);
+      if (stage === 'before-load') child.abort(stopped);
+      return initialized;
+    }),
+  };
+  const sibling = {
+    id: 'lazy-sibling',
+    resolve: jest.fn(() =>
+      initializeWorkspaceAgent(req, 'lazy-sibling', [
+        { ...file, file_id: 'sibling', filename: 'sibling.pptx' },
+      ]),
+    ),
+  };
+  client.options.agent.lazySubagentConfigs = [descriptor, sibling];
+  const state = installNativeWorkspacePreparation(
+    client,
+    req,
+    [file],
+    [file, { ...file, file_id: 'sibling' }],
+    ['lazy-cancel', 'lazy-sibling'],
+    true,
+    {
+      signal: parent.signal,
+      beforeInvoke: async (name, args) => {
+        if (
+          stage === 'during-import' &&
+          name === 'workspace_import_attachment' &&
+          args.attachment_id === file.file_id
+        )
+          child.abort(stopped);
+      },
+    },
+  );
+  const model = jest.fn();
+  await runBoundary(parent, async () => {
+    await expect(descriptor.resolve({ signal: child.signal }).then(model)).rejects.toBe(stopped);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(model).not.toHaveBeenCalled();
+    expect(parent.signal.aborted).toBe(false);
+    expect(initialized.additional_instructions ?? '').not.toContain('workspace_path');
+    expect(state.calls).toEqual(stage === 'before-load' ? [] : ['workspace_import_attachment']);
+    expect(state.loads).toHaveLength(stage === 'before-load' ? 0 : 1);
+    expect(state.copies.get(file.file_id)?.status).toBe(
+      stage === 'before-load' ? undefined : 'claimed',
+    );
+    expect(state.nas).toEqual(new Set(['聊天上传/演示.pptx']));
+    const resolvedSibling = await sibling.resolve({ signal: new AbortController().signal });
+    expect(resolvedSibling.additional_instructions).toContain(
+      '/workspace/Personal/聊天上传/sibling.pptx',
+    );
+    expect(client.options.agent.additional_instructions ?? '').not.toContain('workspace_path');
+    expect(state.contents.get('聊天上传/演示.pptx')).toBe('unrelated-original');
+  });
+}
+
 describe('AgentClient code approval persistence', () => {
   it('persists a validated mode in agent conversation options', () => {
     const client = Object.create(AgentClient.prototype);
@@ -7019,103 +7243,8 @@ describe('AgentClient - titleConvo', () => {
       );
     });
 
-    function installWorkspacePreparation(
-      requestFiles,
-      files,
-      allowedAgents = ['primary-agent'],
-      native = false,
-    ) {
-      const { createWorkspacePreparation } = jest.requireActual('@librechat/api');
-      const { DynamicStructuredTool } = require('@librechat/agents/langchain/tools');
-      const key = `workspace_execute${Constants.mcp_delimiter}workspace-mcp`;
-      const nas = new Set(['聊天上传/演示.pptx']);
-      const copies = new Map();
-      const calls = [];
-      const invoke = async (name, args) => {
-        calls.push(name);
-        if (name.startsWith('workspace_list'))
-          return JSON.stringify({
-            ok: true,
-            entries: [...nas].map((path) => ({ name: path.split('/').pop(), type: 'regular' })),
-          });
-        if (nas.has(args.path)) return JSON.stringify({ ok: false, error: { code: 'CONFLICT' } });
-        nas.add(args.path);
-        return JSON.stringify({ ok: true });
-      };
-      if (native) {
-        require('~/config').getMCPManager.mockReturnValue({
-          formatInstructionsForContext: mockFormatInstructions,
-          callTool: async ({ toolName, toolArguments }) => [
-            await invoke(toolName, toolArguments),
-            undefined,
-          ],
-        });
-        mockReq.user.role = 'USER';
-        const { Permissions, PermissionTypes } = require('librechat-data-provider');
-        require('~/models').getRoleByName.mockResolvedValue({
-          permissions: { [PermissionTypes.MCP_SERVERS]: { [Permissions.USE]: true } },
-        });
-      }
-      const prepare = createWorkspacePreparation({
-        req: mockReq,
-        requestFiles: requestFiles ?? [],
-        conversationId: 'convo-123',
-        getContext: (id) =>
-          allowedAgents.includes(id)
-            ? { toolRegistry: new Map([[key, { name: key }]]) }
-            : undefined,
-        loadTools: async (keys) => ({
-          loadedTools: await Promise.all(
-            keys.map((name) =>
-              native
-                ? jest.requireActual('~/server/services/MCP').createMCPTool({
-                    user: mockReq.user,
-                    provider: 'openai',
-                    toolKey: name,
-                    config: { type: 'stdio', command: 'unused-synthetic-transport' },
-                    availableTools: {
-                      [name]: {
-                        function: {
-                          name,
-                          description: name,
-                          parameters: { type: 'object', additionalProperties: true },
-                        },
-                      },
-                    },
-                  })
-                : new DynamicStructuredTool({
-                    name,
-                    description: name,
-                    schema: { type: 'object', additionalProperties: true },
-                    func: (args) => invoke(name, args),
-                  }),
-            ),
-          ),
-        }),
-        db: {
-          getFile: async ({ fileId }) =>
-            files.some((f) => f.file_id === fileId)
-              ? { metadata: { workspaceCopy: copies.get(fileId) } }
-              : null,
-          claim: async ({ fileId, path, claimId }) => {
-            if (copies.has(fileId)) return null;
-            copies.set(fileId, { path, claimId, status: 'claimed' });
-            return {};
-          },
-          advance: async ({ fileId, nextPath }) => {
-            copies.get(fileId).path = nextPath;
-            return {};
-          },
-          complete: async ({ fileId }) => {
-            copies.get(fileId).status = 'ready';
-            return {};
-          },
-          release: async ({ fileId }) => copies.delete(fileId),
-        },
-      });
-      client.options.prepareWorkspaceAttachments = prepare;
-      return { nas, copies, calls };
-    }
+    const installWorkspacePreparation = (...args) =>
+      installNativeWorkspacePreparation(client, mockReq, ...args);
 
     it('delivers final current paths through definitions-only context before fake model planning', async () => {
       const file = {
@@ -7174,7 +7303,7 @@ describe('AgentClient - titleConvo', () => {
         mockAgent.toolDefinitions = [
           { name: `workspace_execute${Constants.mcp_delimiter}workspace-mcp` },
         ];
-        client.authorizedHistoricalReplayFiles = new Map([[file.file_id, file]]);
+        client.authorizedHistoricalFiles = new Map([[file.file_id, file]]);
         installWorkspacePreparation([], [file]);
         await client.buildMessages(
           [
@@ -7204,59 +7333,41 @@ describe('AgentClient - titleConvo', () => {
       },
     );
 
-    it('runs real definitions-only [] initialization through native invoke to the first fake model input', async () => {
-      const { initializeAgent } = jest.requireActual('@librechat/api');
-      const key = `workspace_execute${Constants.mcp_delimiter}workspace-mcp`;
-      const endpoint = 'SyntheticWorkspace';
-      mockReq.config.endpoints = {
-        custom: [
-          {
-            name: endpoint,
-            apiKey: 'synthetic-local-key',
-            baseURL: 'http://127.0.0.1:1/v1',
-            models: { default: ['fixture'], fetch: false },
-          },
-        ],
-      };
-      const initialized = await initializeAgent(
-        {
-          req: mockReq,
-          res: {},
-          agent: { id: 'primary-agent', provider: endpoint, model: 'fixture', tools: [key] },
-          loadTools: async () => ({
-            tools: [],
-            toolDefinitions: [{ name: key, parameters: { type: 'object', properties: {} } }],
-            toolRegistry: new Map([[key, { name: key }]]),
-          }),
-          endpointOption: { endpoint: EModelEndpoint.agents },
-          allowedProviders: new Set([endpoint]),
-          isInitialAgent: true,
-        },
-        {
-          getFiles: async () => [],
-          getConvoFiles: async () => [],
-          updateFilesUsage: async () => [],
-          getUserKey: async () => null,
-          getUserKeyValues: async () => ({}),
-          getToolFilesByIds: async () => [],
-        },
-      );
-      expect(initialized.requestAttachments).toEqual([]);
-      expect(initialized.tools).toEqual([]);
-      client.options.agent = initialized;
-      client.options.attachments = initialized.requestAttachments;
-      const file = {
-        ...makeUploadedFile(
-          'prior-native',
-          '演示.pptx',
-          'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-        ),
-        context: 'message_attachment',
-      };
-      client.authorizedHistoricalReplayFiles = new Map([[file.file_id, file]]);
-      const state = installWorkspacePreparation([], [file], ['primary-agent'], true);
-      const result = await client.buildMessages(
-        [
+    it.each([
+      [false, 'none'],
+      [false, 'text'],
+      [false, undefined],
+    ])(
+      'runs [] initialization and real history (summarize=%s, delivery=%s) through native invoke to the first fake model input',
+      async (summarize, delivery) => {
+        const initialized = await initializeWorkspaceAgent(mockReq);
+        expect(initialized.requestAttachments).toEqual([]);
+        expect(initialized.tools).toEqual([]);
+        client.options.agent = initialized;
+        client.options.attachments = initialized.requestAttachments;
+        const file = {
+          ...makeUploadedFile(
+            'prior-native',
+            '演示.pptx',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          ),
+          context: 'message_attachment',
+          llmDeliveryPath: delivery,
+          ...(delivery === 'text'
+            ? { text: 'Extracted slide text', metadata: { destinationChosen: true } }
+            : {}),
+        };
+        client.options.resendFiles = true;
+        initialized.resendFiles = true;
+        client.shouldSummarize = summarize;
+        const models = require('~/models');
+        models.getFiles.mockImplementation(async (filter) =>
+          filter.user === mockReq.user.id && filter.file_id.$in.includes(file.file_id)
+            ? [file]
+            : [],
+        );
+        const state = installWorkspacePreparation([], [file], ['primary-agent'], true);
+        models.getMessages.mockResolvedValue([
           {
             messageId: 'prior',
             isCreatedByUser: true,
@@ -7264,68 +7375,179 @@ describe('AgentClient - titleConvo', () => {
             files: [{ file_id: file.file_id }],
           },
           {
-            messageId: 'followup',
+            messageId: 'summary',
             parentMessageId: 'prior',
+            isCreatedByUser: false,
+            text: 'summary',
+            summary: 'Prior attachment discussed',
+            summaryTokenCount: 8,
+          },
+          {
+            messageId: 'followup',
+            parentMessageId: 'summary',
             isCreatedByUser: true,
             text: 'process',
           },
-        ],
-        'followup',
-        {},
-      );
-      const { createRun } = jest.requireActual('@librechat/api');
-      const sdk = jest.requireActual('@librechat/agents');
-      const finalPath = '/workspace/Personal/聊天上传/演示 (2).pptx';
-      const tokenCounter = jest.fn((message) => JSON.stringify(message.content).length);
-      const fakeModel = jest.fn(async (_url, init) => {
-        const body = JSON.parse(init.body);
-        expect(JSON.stringify(body.messages)).toContain(finalPath);
-        expect(JSON.stringify(body.messages)).not.toContain('suggested_path');
-        expect(JSON.stringify(tokenCounter.mock.calls)).toContain(finalPath);
-        expect(state.calls).toEqual([
-          'workspace_import_attachment',
-          'workspace_import_attachment',
-          'workspace_list',
         ]);
-        return Response.json({
-          id: 'synthetic-planning',
-          object: 'chat.completion',
-          model: 'fixture',
-          choices: [
-            {
-              index: 0,
-              message: { role: 'assistant', content: 'Prepared.' },
-              finish_reason: 'stop',
-            },
-          ],
-          usage: { prompt_tokens: 100, completion_tokens: 2, total_tokens: 102 },
+        const history = await client.loadHistory('convo-123', 'followup');
+        expect(client.authorizedHistoricalFiles.has(file.file_id)).toBe(true);
+        if (!summarize) {
+          expect(client.authorizedHistoricalReplayFiles.has(file.file_id)).toBe(
+            delivery !== 'none',
+          );
+        }
+        expect(models.getFiles).toHaveBeenCalledTimes(1);
+        const result = await client.buildMessages(history, 'followup', {});
+        const { createRun } = jest.requireActual('@librechat/api');
+        const sdk = jest.requireActual('@librechat/agents');
+        const finalPath = '/workspace/Personal/聊天上传/演示 (2).pptx';
+        const tokenCounter = jest.fn((message) => JSON.stringify(message.content).length);
+        const fakeModel = jest.fn(async (_url, init) => {
+          const body = JSON.parse(init.body);
+          expect(JSON.stringify(body.messages)).toContain(finalPath);
+          expect(JSON.stringify(body.messages)).not.toContain('suggested_path');
+          expect(JSON.stringify(tokenCounter.mock.calls)).toContain(finalPath);
+          expect(state.calls).toEqual([
+            'workspace_import_attachment',
+            'workspace_import_attachment',
+            'workspace_list',
+          ]);
+          return Response.json({
+            id: 'synthetic-planning',
+            object: 'chat.completion',
+            model: 'fixture',
+            choices: [
+              {
+                index: 0,
+                message: { role: 'assistant', content: 'Prepared.' },
+                finish_reason: 'stop',
+              },
+            ],
+            usage: { prompt_tokens: 100, completion_tokens: 2, total_tokens: 102 },
+          });
         });
-      });
-      initialized.model_parameters.streaming = false;
-      initialized.model_parameters.configuration = {
-        ...initialized.model_parameters.configuration,
-        fetch: fakeModel,
-      };
-      const formatted = sdk.formatAgentMessages(result.prompt);
-      const run = await createRun({
-        runId: 'synthetic-premodel',
-        agents: [initialized],
-        messages: formatted.messages,
-        signal: new AbortController().signal,
-        tokenCounter,
-        streaming: false,
-        centralTraceExportEnabled: false,
-        appConfig: mockReq.config,
-      });
-      await run.processStream(
-        { messages: formatted.messages },
-        {
-          version: 'v2',
-          configurable: { thread_id: 'synthetic-premodel' },
-        },
-      );
-      expect(fakeModel).toHaveBeenCalledTimes(1);
-    });
+        initialized.model_parameters.streaming = false;
+        initialized.model_parameters.configuration = {
+          ...initialized.model_parameters.configuration,
+          fetch: fakeModel,
+        };
+        const formatted = sdk.formatAgentMessages(result.prompt);
+        const run = await createRun({
+          runId: 'synthetic-premodel',
+          agents: [initialized],
+          messages: formatted.messages,
+          signal: new AbortController().signal,
+          tokenCounter,
+          streaming: false,
+          centralTraceExportEnabled: false,
+          appConfig: mockReq.config,
+        });
+        await run.processStream(
+          { messages: formatted.messages },
+          {
+            version: 'v2',
+            configurable: { thread_id: 'synthetic-premodel' },
+          },
+        );
+        expect(fakeModel).toHaveBeenCalledTimes(1);
+        // A later request must freshly list the mapping without replacing user edits.
+        const copyPath = '聊天上传/演示 (2).pptx';
+        state.contents.set(copyPath, 'edited-work-copy');
+        state.calls.length = 0;
+        await client.loadHistory('convo-123', 'followup');
+        await client.buildMessages(history, 'followup', {});
+        expect(state.calls).toEqual(['workspace_list']);
+        expect(state.contents.get(copyPath)).toBe('edited-work-copy');
+        expect(state.contents.get('聊天上传/演示.pptx')).toBe('unrelated-original');
+        expect(initialized.additional_instructions).toContain(finalPath);
+        state.nas.delete(copyPath);
+        await client.buildMessages(history, 'followup', {});
+        expect(initialized.additional_instructions).toContain('workspace_copy_moved_or_deleted');
+      },
+    );
+
+    it.each([
+      'nearest',
+      'denied',
+      'other-owner',
+      'other-tenant',
+      'off-branch',
+      'resend-disabled',
+      'agent-disabled',
+      'endpoint-disabled',
+    ])(
+      'preserves %s admission through real [] initialization and history loading',
+      async (scenario) => {
+        const initialized = await initializeWorkspaceAgent(mockReq);
+        initialized.resendFiles = scenario !== 'resend-disabled';
+        client.options.agent = initialized;
+        client.options.attachments = initialized.requestAttachments;
+        client.options.resendFiles = true;
+        mockReq.user.tenantId = 'tenant';
+        const file = {
+          ...makeUploadedFile(
+            'nearest',
+            '演示.pptx',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          ),
+          context: 'message_attachment',
+          llmDeliveryPath: 'none',
+          tenantId: 'tenant',
+        };
+        const old = { ...file, file_id: 'old', filename: 'old.pptx' };
+        const sibling = { ...file, file_id: 'sibling', filename: 'sibling.pptx' };
+        const models = require('~/models');
+        models.getMessages.mockResolvedValue([
+          { messageId: 'old', isCreatedByUser: true, text: 'old', files: [old] },
+          {
+            messageId: 'nearest',
+            parentMessageId: 'old',
+            isCreatedByUser: true,
+            text: 'new',
+            files: [{ file_id: scenario === 'off-branch' ? 'missing' : file.file_id }],
+          },
+          {
+            messageId: 'sibling',
+            parentMessageId: 'old',
+            isCreatedByUser: true,
+            text: 'sibling',
+            files: [sibling],
+          },
+          { messageId: 'now', parentMessageId: 'nearest', isCreatedByUser: true, text: 'continue' },
+        ]);
+        const ownerFile = { ...file };
+        if (scenario === 'other-owner') ownerFile.user = 'foreign';
+        if (scenario === 'other-tenant') ownerFile.tenantId = 'foreign';
+        models.getFiles.mockImplementation(async (filter) =>
+          [old, sibling, ...(scenario === 'denied' ? [] : [ownerFile])].filter((f) =>
+            filter.file_id.$in.includes(f.file_id),
+          ),
+        );
+        const state = installWorkspacePreparation(
+          [],
+          [old, file, sibling],
+          scenario === 'agent-disabled' ? [] : ['primary-agent'],
+          true,
+        );
+        if (scenario === 'endpoint-disabled') {
+          mockReq.config.fileConfig = {
+            endpoints: { [initialized.endpoint]: { supportedMimeTypes: ['image/png'] } },
+          };
+        }
+        const history = await client.loadHistory('convo-123', 'now');
+        await client.buildMessages(history, 'now', {});
+        const instructions = initialized.additional_instructions ?? '';
+        if (scenario === 'nearest') {
+          expect(instructions).toContain('/workspace/Personal/聊天上传/演示 (2).pptx');
+          expect(state.copies.size).toBe(1);
+        } else {
+          expect(state.calls).toEqual([]);
+          expect(instructions).not.toContain('workspace_path');
+        }
+        expect(instructions).not.toContain('old.pptx');
+        expect(instructions).not.toContain('sibling.pptx');
+      },
+    );
 
     it('waits for preparation at an authorized lazy Agent boundary without sharing its manifest', async () => {
       const file = {
@@ -7355,6 +7577,22 @@ describe('AgentClient - titleConvo', () => {
       expect(mockAgent.additional_instructions ?? '').not.toContain('/workspace/Personal/');
     });
 
+    it.each(['before-load', 'during-import'])(
+      'stops native lazy preparation %s while its parent and sibling remain active',
+      async (stage) => {
+        expect.hasAssertions();
+        await exerciseWorkspaceLazyCancellation(client, mockReq, stage, async (parent, resolve) => {
+          await client.buildMessages(
+            [{ messageId: 'now', text: 'delegate', isCreatedByUser: true }],
+            'now',
+            {},
+            { abortController: parent },
+          );
+          await resolve();
+        });
+      },
+    );
+
     it('never revives an older group when a nonempty current request is rejected', async () => {
       const file = {
         ...makeUploadedFile(
@@ -7366,7 +7604,7 @@ describe('AgentClient - titleConvo', () => {
       };
       client.options.attachments = [];
       mockAgent.currentRequestAttachments = [];
-      client.authorizedHistoricalReplayFiles = new Map([[file.file_id, file]]);
+      client.authorizedHistoricalFiles = new Map([[file.file_id, file]]);
       const state = installWorkspacePreparation([{ file_id: 'denied' }], [file]);
       await client.buildMessages(
         [
@@ -10527,6 +10765,33 @@ describe('AgentClient - resumeCompletion content protection', () => {
     expect(resolvedChild.additional_instructions).toContain('Lazy Workspace result');
     expect(resolveLazy).toHaveBeenCalledTimes(1);
   });
+
+  it.each(['before-load', 'during-import'])(
+    'stops native lazy resume preparation %s while its parent and sibling remain active',
+    async (stage) => {
+      mockGetAgentCheckpointer.mockResolvedValue({
+        getTuple: jest.fn().mockResolvedValue({ checkpoint: { channel_values: { messages: [] } } }),
+      });
+      const context = makeContext(undefined);
+      await exerciseWorkspaceLazyCancellation(
+        context,
+        context.options.req,
+        stage,
+        async (parent, resolve) => {
+          mockCreateRun.mockImplementation(async () => ({
+            resume: jest.fn(resolve),
+            getCalibrationRatio: jest.fn(() => 0),
+          }));
+          await AgentClient.prototype.resumeCompletion.call(context, {
+            resumeValue: {},
+            abortController: parent,
+          });
+          expect(context.contentParts).toEqual([]);
+          expect(mockCreateRun).toHaveBeenCalledTimes(1);
+        },
+      );
+    },
+  );
 
   it('fails closed when a paused file reference cannot be rehydrated', async () => {
     mockGetAgentCheckpointer.mockResolvedValue({

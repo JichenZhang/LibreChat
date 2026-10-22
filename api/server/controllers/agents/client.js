@@ -2998,14 +2998,15 @@ class AgentClient extends BaseClient {
       { agent, agentId },
       scopedContext,
       assertLateBoundContent = false,
+      signal = opts?.abortController?.signal,
     ) => {
       normalizeInstructions(agent);
       const workspaceContext = await this.options.prepareWorkspaceAttachments?.({
         agent,
         messages: workspaceMessages,
-        historicalFiles: [...(this.authorizedHistoricalReplayFiles?.values() ?? [])],
+        historicalFiles: [...(this.authorizedHistoricalFiles?.values() ?? [])],
         configServers,
-        signal: opts?.abortController?.signal,
+        signal,
       });
       const agentRunContextParts = [sharedRunContext, workspaceContext];
       const agentMemoryContexts = [];
@@ -3172,6 +3173,7 @@ class AgentClient extends BaseClient {
                       { agent, agentId: agent.id },
                       lateScopedContext.get(agent.id),
                       true,
+                      context.signal,
                     ),
                   ),
                 ),
@@ -5659,7 +5661,7 @@ class AgentClient extends BaseClient {
                       }),
                       historicalFiles: resumeContentProjection.checkpointFiles,
                       configServers: resumeConfigServers,
-                      signal: abortController.signal,
+                      signal: context.signal,
                     }),
                   ]
                     .filter(Boolean)

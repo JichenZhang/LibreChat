@@ -187,6 +187,39 @@ describe('Workspace copy preparation', () => {
     expect(state.copies.get('cancelled')?.status).toBe('claimed');
   });
 
+  it('never schedules another listing page after cancellation of an in-flight page', async () => {
+    const state = fixture();
+    state.copies.set('native', { path: '聊天上传/演示.pptx', claimId: 'ready', status: 'ready' });
+    const controller = new AbortController();
+    let settle!: (value: string) => void;
+    let started!: () => void;
+    const pageStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const callTool = jest.fn(async () => {
+      started();
+      return new Promise<string>((resolve) => {
+        settle = resolve;
+      });
+    });
+    const pending = prepareWorkspaceCopiesWithTools({
+      files: [file('native')],
+      userId: 'owner',
+      tenantId: 'tenant',
+      db: state.deps,
+      callTool,
+      signal: controller.signal,
+    });
+    const rejected = pending.catch((error: Error) => error);
+    await pageStarted;
+    controller.abort(new Error('child cancelled'));
+    expect(await rejected).toEqual(new Error('child cancelled'));
+    settle(JSON.stringify({ ok: true, entries: [], next_cursor: 'next-page' }));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(callTool).toHaveBeenCalledTimes(1);
+    expect(state.copies.get('native')?.status).toBe('ready');
+  });
+
   it.each(['other-owner', 'other-tenant'])(
     'rejects %s without reading a mapping or transferring',
     async (denial) => {

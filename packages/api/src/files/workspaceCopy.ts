@@ -98,6 +98,7 @@ export async function prepareWorkspaceCopiesWithTools(input: {
         const name = path.slice(slash + 1);
         let cursor: string | undefined;
         for (let page = 0; page < 100; page++) {
+          checkSignal?.throwIfAborted();
           const result = toolPayload(
             await callTool(
               'workspace_list',

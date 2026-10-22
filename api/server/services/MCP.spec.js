@@ -1556,13 +1556,15 @@ describe('User parameter passing tests', () => {
   });
 
   describe('createMCPTool', () => {
-    it('prepares a trusted chat PPT before execute and runs the command only on the second call', async () => {
+    it('prepares through native invoke before planning and executes the first final-path command once', async () => {
+      const { createWorkspacePreparation } = jest.requireActual('@librechat/api');
       const user = { id: 'owner', tenantId: 'tenant', role: 'USER' };
       const db = require('~/models');
       db.getRoleByName.mockResolvedValue({
         permissions: { [PermissionTypes.MCP_SERVERS]: { [Permissions.USE]: true } },
       });
       let copy;
+      const nas = new Map([['聊天上传/演示.pptx', 'unrelated']]);
       db.getWorkspaceCopyFile.mockImplementation(async () => ({
         metadata: { workspaceCopy: copy },
       }));
@@ -1571,87 +1573,125 @@ describe('User parameter passing tests', () => {
         copy = { path, claimId, status: 'claimed' };
         return {};
       });
-      db.advanceWorkspaceCopy.mockImplementation(async ({ path, nextPath, claimId }) => {
-        if (copy.path !== path || copy.claimId !== claimId) return null;
+      db.advanceWorkspaceCopy.mockImplementation(async ({ nextPath }) => {
         copy.path = nextPath;
         return {};
       });
-      db.completeWorkspaceCopy.mockImplementation(async ({ path, claimId }) => {
-        if (copy.path !== path || copy.claimId !== claimId) return null;
+      db.completeWorkspaceCopy.mockImplementation(async () => {
         copy.status = 'ready';
         return {};
       });
-      const callTool = jest.fn(async ({ toolName, toolArguments }) => {
+      const transport = jest.fn(async ({ toolName, toolArguments }) => {
         if (toolName === 'workspace_import_attachment') {
-          if (toolArguments.path === '聊天上传/演示.pptx') {
+          if (nas.has(toolArguments.path))
             return [JSON.stringify({ ok: false, error: { code: 'CONFLICT' } }), undefined];
-          }
+          nas.set(toolArguments.path, 'native bytes');
           return [JSON.stringify({ ok: true }), undefined];
         }
-        if (toolName === 'workspace_list') {
+        if (toolName === 'workspace_list')
           return [
-            JSON.stringify({ ok: true, entries: [{ name: '演示 (2).pptx', type: 'regular' }] }),
+            JSON.stringify({
+              ok: true,
+              entries: [...nas.keys()].map((path) => ({
+                name: path.split('/').pop(),
+                type: 'regular',
+              })),
+            }),
             undefined,
           ];
-        }
         return [JSON.stringify({ ok: true, stdout: 'edited' }), undefined];
       });
-      mockGetMCPManager.mockReturnValue({ callTool });
-      const key = `workspace_execute${D}workspace-mcp`;
-      const tool = await createMCPTool({
-        user,
-        toolKey: key,
-        provider: 'openai',
-        availableTools: {
-          [key]: {
-            serverToolName: 'workspace_execute',
-            function: {
-              name: key,
-              description: 'Execute',
-              parameters: { type: 'object', properties: { command: { type: 'string' } } },
-            },
-          },
-        },
-      });
-      const config = {
-        configurable: {
-          user,
-          user_id: 'owner',
-          workspaceInputFiles: [
-            {
-              file_id: 'ppt-id',
-              filename: '演示.pptx',
-              user: 'owner',
-              tenantId: 'tenant',
-              context: 'message_attachment',
-              source: 'local',
-            },
-          ],
-        },
-        metadata: { provider: 'openai', thread_id: 'thread-1', run_id: 'run-1' },
-        toolCall: {},
+      mockGetMCPManager.mockReturnValue({ callTool: transport });
+      const definitions = [
+        'workspace_execute',
+        'workspace_import_attachment',
+        'workspace_list',
+      ].map((name) => ({
+        name: `${name}${D}workspace-mcp`,
+        serverName: 'workspace-mcp',
+        parameters: { type: 'object', additionalProperties: true },
+      }));
+      const catalog = Object.fromEntries(
+        definitions.map((definition) => [
+          definition.name,
+          { function: definition, serverToolName: definition.name.split(D)[0] },
+        ]),
+      );
+      const file = {
+        file_id: 'ppt-id',
+        filename: '演示.pptx',
+        user: 'owner',
+        tenantId: 'tenant',
+        context: 'message_attachment',
+        source: 'local',
+        bytes: 100,
+        type: 'application/octet-stream',
       };
-      const first = await tool.invoke(
-        { command: 'python edit.py /workspace/Personal/聊天上传/演示.pptx' },
-        config,
-      );
-      expect(JSON.stringify(first)).toContain('command_not_run');
-      expect(JSON.stringify(first)).toContain('/workspace/Personal/聊天上传/演示 (2).pptx');
-      expect(callTool.mock.calls.map(([arg]) => arg.toolName)).toEqual([
-        'workspace_import_attachment',
-        'workspace_import_attachment',
-      ]);
-      await tool.invoke(
-        { command: 'python edit.py /workspace/Personal/聊天上传/演示 (2).pptx' },
-        config,
-      );
-      expect(callTool.mock.calls.map(([arg]) => arg.toolName)).toEqual([
+      const agent = {
+        id: 'selected',
+        provider: 'openai',
+        endpoint: 'openAI',
+        tools: [],
+        toolDefinitions: [definitions[0]],
+        currentRequestAttachments: [file],
+      };
+      const loadTools = jest.fn(async (keys) => ({
+        loadedTools: await Promise.all(
+          keys.map((key) =>
+            createMCPTool({ user, provider: 'openai', toolKey: key, availableTools: catalog }),
+          ),
+        ),
+      }));
+      const prepare = createWorkspacePreparation({
+        req: { user, config: {} },
+        requestFiles: [file],
+        getContext: (id) =>
+          id === agent.id
+            ? {
+                toolRegistry: new Map([[definitions[0].name, definitions[0]]]),
+                mcpAvailableTools: { 'workspace-mcp': catalog },
+              }
+            : undefined,
+        loadTools,
+        db: {
+          getFile: db.getWorkspaceCopyFile,
+          claim: db.claimWorkspaceCopy,
+          advance: db.advanceWorkspaceCopy,
+          complete: db.completeWorkspaceCopy,
+          release: db.releaseWorkspaceCopy,
+        },
+        conversationId: 'thread',
+        runId: 'run',
+      });
+      const context = await prepare({ agent, messages: [], historicalFiles: [] });
+      const fakeModel = jest.fn((input) => {
+        expect(transport.mock.calls.every(([call]) => call.toolName !== 'workspace_execute')).toBe(
+          true,
+        );
+        expect(input).toContain('/workspace/Personal/聊天上传/演示 (2).pptx');
+        expect(input).not.toContain('suggested_path');
+        expect(input).not.toContain('command_not_run');
+        return { command: 'python edit.py /workspace/Personal/聊天上传/演示 (2).pptx' };
+      });
+      const command = fakeModel(context);
+      const execute = await createMCPTool({
+        user,
+        provider: 'openai',
+        toolKey: definitions[0].name,
+        availableTools: catalog,
+      });
+      await execute.invoke(command, {
+        configurable: { user, user_id: user.id },
+        metadata: { provider: 'openai', thread_id: 'thread', run_id: 'run' },
+      });
+      expect(transport.mock.calls.map(([call]) => call.toolName)).toEqual([
         'workspace_import_attachment',
         'workspace_import_attachment',
         'workspace_list',
         'workspace_execute',
       ]);
-      expect(callTool.mock.calls.at(-1)[0].toolArguments.command).toContain('演示 (2).pptx');
+      expect(nas.get('聊天上传/演示.pptx')).toBe('unrelated');
+      expect(fakeModel).toHaveBeenCalledTimes(1);
     });
 
     it('pins Workspace Skill staging to the trusted selected Agent Skill', async () => {

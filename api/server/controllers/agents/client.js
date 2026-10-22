@@ -124,10 +124,8 @@ const {
   filterMalformedContentParts,
   countFormattedMessageTokens,
   prependFileContext,
-  prependContextText,
-  formatWorkspaceAttachmentReferences,
-  trustedWorkspaceFiles,
-  selectWorkspaceInputFiles,
+  snapshotWorkspaceBranch,
+  workspaceAttachmentBranch,
   prependQuotes,
   applyAttachmentOnlyText,
   hydrateMissingIndexTokenCounts,
@@ -2275,6 +2273,7 @@ class AgentClient extends BaseClient {
    *  answers are built: the walk it returns stops at a checkpoint summary. */
   onHistoryLoaded(rows) {
     this.loadedHistoryRows = rows;
+    this.workspaceBranchReferences = snapshotWorkspaceBranch(rows);
   }
 
   async loadHistory(conversationId, parentMessageId = null) {
@@ -2323,6 +2322,11 @@ class AgentClient extends BaseClient {
       encoding: this.getEncoding(),
     });
     this.loadedHistoryRows = undefined;
+    const workspaceMessages = workspaceAttachmentBranch(
+      orderedMessages,
+      this.workspaceBranchReferences,
+    );
+    this.workspaceBranchReferences = undefined;
 
     let payload;
     /** @type {number | undefined} */
@@ -2475,12 +2479,6 @@ class AgentClient extends BaseClient {
       return contextPromise;
     };
 
-    let workspaceAttachmentContext;
-    const workspaceToolNames = [
-      ...(this.options.agent?.tools ?? []).map((tool) => tool?.name).filter(Boolean),
-      ...(this.options.agent?.toolDefinitions ?? []).map((tool) => tool?.name).filter(Boolean),
-    ];
-    this.workspaceInputFiles = [];
     if (requestAttachmentsSource) {
       const attachments = this.getProcessableAttachmentsForEndpoint(
         requestAttachments,
@@ -2515,47 +2513,9 @@ class AgentClient extends BaseClient {
         this.processAttachments(latestMessage, attachments),
       ]);
 
-      if (latestMessage?.isCreatedByUser === true) {
-        const processedIds = collectFileIds(files ?? []);
-        this.workspaceInputFiles = trustedWorkspaceFiles(
-          (this.options.agent?.currentRequestAttachments ?? []).filter((file) =>
-            processedIds.has(file.file_id),
-          ),
-          this.options.req.user?.id,
-          this.options.req.user?.tenantId,
-        );
-      }
-
       this.options.attachments = files;
     } else {
       agentScopedContextPromise = startAgentScopedContext();
-    }
-
-    if (
-      !requestAttachmentsSource &&
-      this.workspaceInputFiles.length === 0 &&
-      this.options.resendFiles !== false
-    ) {
-      this.workspaceInputFiles = selectWorkspaceInputFiles(
-        orderedMessages,
-        [...(this.authorizedHistoricalReplayFiles?.values() ?? [])],
-        this.options.req.user?.id,
-        this.options.req.user?.tenantId,
-      );
-    }
-    workspaceAttachmentContext = formatWorkspaceAttachmentReferences({
-      files: this.workspaceInputFiles,
-      toolNames: workspaceToolNames,
-      userId: this.options.req.user?.id,
-      tenantId: this.options.req.user?.tenantId,
-    });
-    if (workspaceAttachmentContext) {
-      assertModelBoundContent({
-        onTraversalFailure: reportLocatorTraversalFailure,
-        filters: this.options.req.config?.filters,
-        legacyPii: this.options.req.config?.messageFilter?.pii,
-        submittedMessages: [{ role: 'user', content: workspaceAttachmentContext }],
-      });
     }
 
     const attachmentTelemetryFiles = [
@@ -2640,14 +2600,6 @@ class AgentClient extends BaseClient {
         hasFileContext = true;
         prependFileContext(formattedMessage, message.fileContext);
       }
-      const hasWorkspaceAttachmentContext =
-        i === orderedMessages.length - 1 &&
-        message.isCreatedByUser === true &&
-        !!workspaceAttachmentContext;
-      if (hasWorkspaceAttachmentContext) {
-        prependContextText(formattedMessage, workspaceAttachmentContext);
-      }
-
       /**
        * Durably re-merge quoted excerpts into every user turn that carries them
        * (current and historical) so the model receives the referenced context on
@@ -2692,7 +2644,6 @@ class AgentClient extends BaseClient {
        */
       const needsCanonicalTokenCount =
         !hasDbTokenCount ||
-        hasWorkspaceAttachmentContext ||
         (this.isVisionModel && (message.image_urls || message.files)) ||
         (Array.isArray(message.quotes) && message.quotes.length > 0);
 
@@ -2703,7 +2654,7 @@ class AgentClient extends BaseClient {
          *  with a dropped summary), the canonical count must be taken from the
          *  message as stored. */
         let countSurface = formattedMessage;
-        if (message.fileContext || droppedPromptSummary || hasWorkspaceAttachmentContext) {
+        if (message.fileContext || droppedPromptSummary) {
           memoryFormattedMessages[i] = buildMemoryFormattedMessage(message);
           countSurface = memoryFormattedMessages[i];
         }
@@ -2711,7 +2662,7 @@ class AgentClient extends BaseClient {
       }
 
       const promptMessageTokenCount =
-        message.fileContext || droppedPromptSummary || hasWorkspaceAttachmentContext
+        message.fileContext || droppedPromptSummary
           ? countFormattedMessageTokens(formattedMessage, encoding)
           : canonicalTokenCount;
 
@@ -3049,7 +3000,14 @@ class AgentClient extends BaseClient {
       assertLateBoundContent = false,
     ) => {
       normalizeInstructions(agent);
-      const agentRunContextParts = [sharedRunContext];
+      const workspaceContext = await this.options.prepareWorkspaceAttachments?.({
+        agent,
+        messages: workspaceMessages,
+        historicalFiles: [...(this.authorizedHistoricalReplayFiles?.values() ?? [])],
+        configServers,
+        signal: opts?.abortController?.signal,
+      });
+      const agentRunContextParts = [sharedRunContext, workspaceContext];
       const agentMemoryContexts = [];
       const agentHasMemory = agentHasInlineMemoryTools(agent);
       if (agentId === this.options.agent.id || memoryAgentEnabled || agentHasMemory) {
@@ -4619,7 +4577,6 @@ class AgentClient extends BaseClient {
                 this.options.req.resolvedConversation?.codeWorkspaces,
             }),
           user: createSafeUser(this.options.req.user),
-          workspaceInputFiles: this.workspaceInputFiles ?? [],
         },
         recursionLimit: resolveRecursionLimit(agentsEConfig, this.options.agent),
         signal: abortController.signal,
@@ -5424,7 +5381,6 @@ class AgentClient extends BaseClient {
                 this.options.req.resolvedConversation?.codeWorkspaces,
             }),
           user: createSafeUser(this.options.req.user),
-          workspaceInputFiles: this.workspaceInputFiles ?? [],
         },
         recursionLimit: resolveRecursionLimit(agentsEConfig, this.options.agent),
         signal: abortController.signal,
@@ -5511,20 +5467,6 @@ class AgentClient extends BaseClient {
           .call(this, requestFiles)
           .filter((file) => !file?.file_id || !checkpointFileIds.has(file.file_id)),
       ];
-      const resumeCurrentWorkspaceFiles = trustedWorkspaceFiles(
-        this.options.agent?.currentRequestAttachments ?? [],
-        this.options.req.user?.id,
-        this.options.req.user?.tenantId,
-      );
-      config.configurable.workspaceInputFiles =
-        resumeCurrentWorkspaceFiles.length > 0
-          ? resumeCurrentWorkspaceFiles
-          : selectWorkspaceInputFiles(
-              storedMessages,
-              resumeSharedFiles,
-              this.options.req.user?.id,
-              this.options.req.user?.tenantId,
-            );
       const resumeSharedFileIds = collectFileIds(resumeSharedFiles);
       const resumeEndpointsByAgentId = new Map(
         agents
@@ -5592,7 +5534,21 @@ class AgentClient extends BaseClient {
               logger,
               mcpManager: resumeMcpManager,
               configServers: resumeConfigServers,
-              sharedRunContext: scopedContext ?? '',
+              sharedRunContext: [
+                scopedContext,
+                await this.options.prepareWorkspaceAttachments?.({
+                  agent,
+                  messages: BaseClient.getMessagesForConversation({
+                    messages: storedMessages,
+                    parentMessageId: this.parentMessageId,
+                  }),
+                  historicalFiles: resumeContentProjection.checkpointFiles,
+                  configServers: resumeConfigServers,
+                  signal: abortController.signal,
+                }),
+              ]
+                .filter(Boolean)
+                .join('\n\n'),
               ephemeralAgent:
                 agent === this.options.agent ? this.options.req.body.ephemeralAgent : undefined,
             });
@@ -5693,7 +5649,21 @@ class AgentClient extends BaseClient {
                   logger,
                   mcpManager: resumeMcpManager,
                   configServers: resumeConfigServers,
-                  sharedRunContext: scopedContext ?? '',
+                  sharedRunContext: [
+                    scopedContext,
+                    await this.options.prepareWorkspaceAttachments?.({
+                      agent,
+                      messages: BaseClient.getMessagesForConversation({
+                        messages: storedMessages,
+                        parentMessageId: this.parentMessageId,
+                      }),
+                      historicalFiles: resumeContentProjection.checkpointFiles,
+                      configServers: resumeConfigServers,
+                      signal: abortController.signal,
+                    }),
+                  ]
+                    .filter(Boolean)
+                    .join('\n\n'),
                 });
                 assertModelBoundContent({
                   onTraversalFailure: reportLocatorTraversalFailure,

@@ -289,6 +289,32 @@ describe('initializeAgent — execution context', () => {
     jest.clearAllMocks();
   });
 
+  it('returns real empty attachment arrays in definitions-only Workspace initialization', async () => {
+    const key = `workspace_execute${Constants.mcp_delimiter}workspace-mcp`;
+    const { agent, req, res, loadTools, db } = createMocks({
+      loadedToolDefinitions: [{ name: key }],
+    });
+    agent.tools = [key];
+    const result = await initializeAgent(
+      {
+        req,
+        res,
+        agent,
+        loadTools,
+        endpointOption: { endpoint: EModelEndpoint.agents },
+        allowedProviders: new Set([Providers.OPENAI]),
+        isInitialAgent: true,
+      },
+      db,
+    );
+    expect(result.requestAttachments).toEqual([]);
+    expect(result.currentRequestAttachments).toEqual([]);
+    expect(result.tools).toEqual([]);
+    expect(result.toolDefinitions).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: key })]),
+    );
+  });
+
   it.each(['prefer', 'defer', 'off'] as const)(
     'uses saved repository instruction mode %s in definitions-only initialization',
     async (mode) => {

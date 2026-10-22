@@ -95,8 +95,11 @@ export async function auditPage({
           }
           break;
         } catch (error) {
+          // execFile errors embed argv, including the authenticated Cookie header.
+          const detail = error instanceof Error ? error.message : String(error);
+          const safeError = new Error(cookie ? detail.replaceAll(cookie, '[redacted]') : detail);
           if (attempt >= RUN_ATTEMPTS) {
-            throw error;
+            throw safeError;
           }
           /** Lighthouse crashes out of a run it could not trace — NO_NAVSTART is
            *  the usual one, and its own message is "run Lighthouse again". The
@@ -105,7 +108,7 @@ export async function auditPage({
            *  broken fails every attempt and still fails here. */
           console.log(
             `Lighthouse run ${run}/${runs} attempt ${attempt} did not complete, retrying: ${
-              error instanceof Error ? error.message.split('\n')[0] : String(error)
+              safeError.message.split('\n')[0]
             }`,
           );
         }

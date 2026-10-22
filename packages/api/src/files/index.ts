@@ -29,3 +29,4 @@ export * from './validation';
 export * from './text';
 export * from './workspaceAttachment';
 export * from './workspaceCopy';
+export * from './workspacePreparation';

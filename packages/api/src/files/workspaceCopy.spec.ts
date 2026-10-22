@@ -3,7 +3,8 @@ import type { TFile } from 'librechat-data-provider';
 import type { WorkspaceCopyDeps } from './workspaceCopy';
 import {
   prepareWorkspaceCopies,
-  workspaceCopyGateResult,
+  formatWorkspaceAttachmentReferences,
+  prepareWorkspaceCopiesWithTools,
   workspaceCopyPath,
   selectWorkspaceInputFiles,
   WORKSPACE_BINARY_MAX_BYTES,
@@ -65,84 +66,112 @@ function fixture(existing: string[] = []) {
 }
 
 describe('Workspace copy preparation', () => {
-  it('returns the real flat path before running a command and reuses edits later', async () => {
+  const ready = (name = '演示.pptx', path = name) => ({
+    filename: name,
+    status: 'ready',
+    workspace_path: `/workspace/Personal/聊天上传/${path}`,
+  });
+  it('offers only the collision-resolved path and freshly verifies edited copies on every request', async () => {
     const state = fixture(['聊天上传/演示.pptx']);
     const input = [file('first')];
-    const first = await prepareWorkspaceCopies(input, 'owner', 'tenant', state.deps);
-    expect(first).toEqual({
-      execute: false,
-      command_not_run: true,
-      prepared_paths: ['/workspace/Personal/聊天上传/演示 (2).pptx'],
-    });
-    expect(
-      JSON.parse(workspaceCopyGateResult(first as Exclude<typeof first, { execute: true }>)[0]),
-    ).toMatchObject({ command_not_run: true });
-    state.nas.set('聊天上传/演示 (2).pptx', 'edited employee copy');
-    expect(await prepareWorkspaceCopies(input, 'owner', 'tenant', state.deps)).toEqual({
-      execute: true,
-    });
-    expect(state.nas.get('聊天上传/演示 (2).pptx')).toBe('edited employee copy');
-    expect(state.calls).toEqual(['聊天上传/演示.pptx', '聊天上传/演示 (2).pptx']);
+    expect(await prepareWorkspaceCopies(input, 'owner', 'tenant', state.deps)).toEqual([
+      ready('演示.pptx', '演示 (2).pptx'),
+    ]);
+    state.nas.set('聊天上传/演示 (2).pptx', 'edited');
+    expect(await prepareWorkspaceCopies(input, 'owner', 'tenant', state.deps)).toEqual([
+      ready('演示.pptx', '演示 (2).pptx'),
+    ]);
+    expect(state.nas.get('聊天上传/演示 (2).pptx')).toBe('edited');
     expect(state.nas.get('聊天上传/演示.pptx')).toBe('employee file');
+    expect(state.calls).toEqual(['聊天上传/演示.pptx', '聊天上传/演示 (2).pptx']);
+    state.nas.delete('聊天上传/演示 (2).pptx');
+    expect(await prepareWorkspaceCopies(input, 'owner', 'tenant', state.deps)).toMatchObject([
+      { status: 'failed', code: 'workspace_copy_moved_or_deleted' },
+    ]);
+    expect(state.calls).toHaveLength(2);
   });
 
-  it('allocates a further suffix only for a distinct attachment', async () => {
+  it('keeps valid siblings before and after oversized and uncertain files', async () => {
     const state = fixture();
-    await prepareWorkspaceCopies([file('first')], 'owner', 'tenant', state.deps);
-    const second = await prepareWorkspaceCopies([file('second')], 'owner', 'tenant', state.deps);
-    expect(second).toMatchObject({
-      prepared_paths: ['/workspace/Personal/聊天上传/演示 (2).pptx'],
-    });
-  });
-
-  it('blocks ambiguous claims, missing mapped files and foreign attachments', async () => {
-    const state = fixture();
-    state.copies.set('first', {
-      path: '聊天上传/演示.pptx',
+    state.copies.set('uncertain', {
+      path: '聊天上传/uncertain.pptx',
+      claimId: 'lost',
       status: 'claimed',
-      claimId: 'other-request',
     });
-    expect(
-      await prepareWorkspaceCopies([file('first')], 'owner', 'tenant', state.deps),
-    ).toMatchObject({ execute: false, error: 'workspace_copy_preparation_uncertain' });
-    state.copies.set('first', {
-      path: '聊天上传/演示.pptx',
-      status: 'ready',
-      claimId: 'other-request',
-    });
-    expect(
-      await prepareWorkspaceCopies([file('first')], 'owner', 'tenant', state.deps),
-    ).toMatchObject({ execute: false, error: 'workspace_copy_moved_or_deleted' });
-    expect(
-      await prepareWorkspaceCopies([file('foreign')], 'other', 'tenant', state.deps),
-    ).toMatchObject({ execute: false, error: 'attachment_access_denied' });
-    expect(state.calls).toEqual([]);
-  });
-
-  it('gates the command on partial preparation and preserves the first copy', async () => {
-    const state = fixture();
-    const importAttachment = state.deps.importAttachment;
-    state.deps.importAttachment = async (fileId, path, signal) =>
-      fileId === 'second'
-        ? { ok: false, code: 'too_large' }
-        : importAttachment(fileId, path, signal);
-    const result = await prepareWorkspaceCopies(
-      [file('first', 'first.pptx'), file('second', 'second.pptx')],
+    const results = await prepareWorkspaceCopies(
+      [
+        { ...file('large'), bytes: WORKSPACE_BINARY_MAX_BYTES + 1 },
+        file('first', 'first.pptx'),
+        file('uncertain', 'uncertain.pptx'),
+        file('last', 'last.pptx'),
+      ],
       'owner',
       'tenant',
       state.deps,
     );
-    expect(result).toMatchObject({
-      execute: false,
-      command_not_run: true,
-      prepared_paths: ['/workspace/Personal/聊天上传/first.pptx'],
-      error: 'workspace_import_too_large',
-    });
-    expect(state.copies.get('first')?.status).toBe('ready');
-    expect(state.copies.has('second')).toBe(false);
+    expect(results).toMatchObject([
+      { status: 'failed', code: 'workspace_import_too_large' },
+      ready('first.pptx'),
+      { status: 'failed', code: 'workspace_copy_preparation_uncertain' },
+      ready('last.pptx'),
+    ]);
+    expect(formatWorkspaceAttachmentReferences(results)).toContain('NAS Personal');
+    expect(state.calls).toEqual(['聊天上传/first.pptx', '聊天上传/last.pptx']);
   });
 
-  it('releases a claim cancelled before transfer without publishing a copy', async () => {
+  it('retains an uncertain claim after publication response loss and never duplicates or overwrites edits', async () => {
+    const state = fixture();
+    state.deps.importAttachment = async (_id, path) => {
+      state.calls.push(path);
+      state.nas.set(path, 'published then edited');
+      throw Error('lost');
+    };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect(
+        await prepareWorkspaceCopies([file('lost')], 'owner', 'tenant', state.deps),
+      ).toMatchObject([
+        {
+          status: 'failed',
+          code: 'workspace_copy_preparation_uncertain',
+          related_path: '/workspace/Personal/聊天上传/演示.pptx',
+        },
+      ]);
+    }
+    expect(state.calls).toHaveLength(1);
+    expect(state.nas.get('聊天上传/演示.pptx')).toBe('published then edited');
+  });
+
+  it('limits concurrent same-file preparation to one import and the next request receives the final path', async () => {
+    const state = fixture(['聊天上传/演示.pptx']);
+    const results = await Promise.all(
+      [1, 2].map(() => prepareWorkspaceCopies([file('same')], 'owner', 'tenant', state.deps)),
+    );
+    expect(results.flat().filter((result) => result.status === 'ready')).toEqual([
+      ready('演示.pptx', '演示 (2).pptx'),
+    ]);
+    expect(state.calls).toHaveLength(2);
+    expect(await prepareWorkspaceCopies([file('same')], 'owner', 'tenant', state.deps)).toEqual([
+      ready('演示.pptx', '演示 (2).pptx'),
+    ]);
+  });
+
+  it('returns a freshly checked concurrent winner path after losing the claim race', async () => {
+    const state = fixture(['聊天上传/演示 (3).pptx']);
+    state.deps.claim = async () => {
+      state.copies.set('same', {
+        path: '聊天上传/演示 (3).pptx',
+        status: 'ready',
+        claimId: 'winner',
+      });
+      return null;
+    };
+    expect(await prepareWorkspaceCopies([file('same')], 'owner', 'tenant', state.deps)).toEqual([
+      ready('演示.pptx', '演示 (3).pptx'),
+    ]);
+    expect(state.calls).toHaveLength(0);
+  });
+
+  it('stops on cancellation without assuming a pending claim or transfer was rolled back', async () => {
     const state = fixture();
     const controller = new AbortController();
     const claim = state.deps.claim;
@@ -154,90 +183,70 @@ describe('Workspace copy preparation', () => {
     await expect(
       prepareWorkspaceCopies([file('cancelled')], 'owner', 'tenant', state.deps, controller.signal),
     ).rejects.toThrow();
-    expect(state.copies.size).toBe(0);
-    expect(state.calls).toEqual([]);
+    expect(state.calls).toHaveLength(0);
+    expect(state.copies.get('cancelled')?.status).toBe('claimed');
   });
 
-  it('preserves a published copy after a lost response and blocks duplicate recovery imports', async () => {
-    const state = fixture();
-    state.deps.importAttachment = async (_fileId, path) => {
-      state.calls.push(path);
-      state.nas.set(path, 'published then edited');
-      throw new Error('lost transfer response');
-    };
-    const input = [file('uncertain')];
-    const first = await prepareWorkspaceCopies(input, 'owner', 'tenant', state.deps);
-    const retry = await prepareWorkspaceCopies(input, 'owner', 'tenant', state.deps);
-    expect(first).toMatchObject({ execute: false, error: 'workspace_copy_preparation_uncertain' });
-    expect(retry).toMatchObject({ execute: false, error: 'workspace_copy_preparation_uncertain' });
-    expect(state.calls).toEqual(['聊天上传/演示.pptx']);
-    expect(state.nas.get('聊天上传/演示.pptx')).toBe('published then edited');
-    expect(
-      JSON.parse(workspaceCopyGateResult(retry as Exclude<typeof retry, { execute: true }>)[0]),
-    ).toMatchObject({
-      command_not_run: true,
-      related_path: '/workspace/Personal/聊天上传/演示.pptx',
-      guidance: expect.stringContaining('NAS Personal'),
-    });
-  });
+  it.each(['other-owner', 'other-tenant'])(
+    'rejects %s without reading a mapping or transferring',
+    async (denial) => {
+      const state = fixture();
+      expect(
+        await prepareWorkspaceCopies(
+          [file('foreign')],
+          denial === 'other-owner' ? denial : 'owner',
+          denial === 'other-tenant' ? denial : 'tenant',
+          state.deps,
+        ),
+      ).toMatchObject([{ status: 'failed', code: 'attachment_access_denied' }]);
+      expect(state.copies.size).toBe(0);
+      expect(state.calls).toHaveLength(0);
+    },
+  );
 
-  it('allows only one transfer during concurrent preparations of the same attachment', async () => {
-    const state = fixture();
-    const results = await Promise.all([
-      prepareWorkspaceCopies([file('same')], 'owner', 'tenant', state.deps),
-      prepareWorkspaceCopies([file('same')], 'owner', 'tenant', state.deps),
-    ]);
-    expect(state.calls).toEqual(['聊天上传/演示.pptx']);
-    expect(results.every((result) => !result.execute)).toBe(true);
-    expect(state.copies.get('same')?.status).toBe('ready');
-    expect(await prepareWorkspaceCopies([file('same')], 'owner', 'tenant', state.deps)).toEqual({
-      execute: true,
-    });
-  });
+  it.each(['string', 'tuple', 'structured', 'text'])(
+    'accepts the native %s response shape',
+    async (shape) => {
+      const state = fixture();
+      const callTool = async (name: string) => {
+        const value =
+          name === 'workspace_list'
+            ? { ok: true, entries: [{ name: '演示.pptx', type: 'regular' }] }
+            : { ok: true };
+        const text = JSON.stringify(value);
+        if (shape === 'string') return text;
+        if (shape === 'tuple') return [text, undefined] as [string, undefined];
+        if (shape === 'structured') return { structuredContent: value };
+        return { content: [{ type: 'text', text }] };
+      };
+      expect(
+        await prepareWorkspaceCopiesWithTools({
+          files: [file('native')],
+          userId: 'owner',
+          tenantId: 'tenant',
+          db: state.deps,
+          callTool,
+        }),
+      ).toEqual([ready()]);
+    },
+  );
 
-  it('keeps filenames as one safe component', () => {
+  it('keeps filenames flat and selects only the nearest attachment group on this branch', () => {
     expect(workspaceCopyPath('../private.pptx')).toBeNull();
     expect(workspaceCopyPath('deck.pptx', 3)).toBe('聊天上传/deck (3).pptx');
-  });
-
-  it('keeps an oversized native upload saved and gives a NAS route without attempting import', async () => {
-    const state = fixture();
-    const large = { ...file('large'), bytes: WORKSPACE_BINARY_MAX_BYTES + 1 };
-    const result = await prepareWorkspaceCopies([large], 'owner', 'tenant', state.deps);
-    expect(result).toMatchObject({ execute: false, error: 'workspace_import_too_large' });
-    expect(
-      JSON.parse(workspaceCopyGateResult(result as Exclude<typeof result, { execute: true }>)[0]),
-    ).toMatchObject({ command_not_run: true, guidance: expect.stringContaining('NAS Personal') });
-    expect(state.calls).toEqual([]);
-    expect(state.copies.size).toBe(0);
-  });
-
-  it('selects only the latest authorized branch attachment group', () => {
-    const first = file('first');
-    const newest = file('newest');
-    const sibling = file('sibling');
+    const messages = [
+      { isCreatedByUser: true, files: [{ file_id: 'old' }] },
+      { isCreatedByUser: true, files: [{ file_id: 'new' }] },
+      { isCreatedByUser: true },
+    ];
     expect(
       selectWorkspaceInputFiles(
-        [
-          { isCreatedByUser: true, files: [{ file_id: first.file_id }] },
-          { isCreatedByUser: true, files: [{ file_id: newest.file_id }] },
-          { isCreatedByUser: true },
-        ],
-        [first, newest, sibling],
+        messages,
+        [file('old'), file('new'), file('sibling')],
         'owner',
         'tenant',
-      ).map((selected) => selected.file_id),
-    ).toEqual(['newest']);
-    expect(
-      selectWorkspaceInputFiles(
-        [
-          { isCreatedByUser: true, files: [{ file_id: first.file_id }] },
-          { isCreatedByUser: true, files: [{ file_id: 'not-authorized' }] },
-        ],
-        [first],
-        'owner',
-        'tenant',
-      ),
-    ).toEqual([]);
+      ).map((entry) => entry.file_id),
+    ).toEqual(['new']);
+    expect(selectWorkspaceInputFiles(messages, [file('old')], 'owner', 'tenant')).toEqual([]);
   });
 });

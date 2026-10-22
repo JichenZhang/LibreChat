@@ -1,6 +1,7 @@
 const { logger } = require('@librechat/data-schemas');
 const { createContentAggregator, GraphNodeKeys } = require('@librechat/agents');
 const {
+  createWorkspacePreparation,
   resolveSender,
   resolveRunConversation,
   resolveAdmittedCodeEnvironmentDecision,
@@ -1840,6 +1841,23 @@ const initializeClientWithProvider = async ({
     collectedThoughtSignatures,
     aggregateContent,
     artifactPromises,
+    prepareWorkspaceAttachments: createWorkspacePreparation({
+      req,
+      requestFiles,
+      signal,
+      conversationId,
+      runId: foregroundRunId,
+      getContext: (agentId) => agentToolContexts.get(agentId),
+      loadTools: (names, agentId, preparationSignal) =>
+        toolExecuteOptions.loadTools(names, agentId, undefined, undefined, preparationSignal),
+      db: {
+        getFile: db.getWorkspaceCopyFile,
+        claim: db.claimWorkspaceCopy,
+        advance: db.advanceWorkspaceCopy,
+        complete: db.completeWorkspaceCopy,
+        release: db.releaseWorkspaceCopy,
+      },
+    }),
     primeInvokedSkills: handlePrimeInvokedSkills,
     invokedSkillIdentities,
     agent: primaryConfig,

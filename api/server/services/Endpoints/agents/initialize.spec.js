@@ -177,6 +177,32 @@ describe('initializeClient — processAgent ACL gate', () => {
     },
   });
 
+  it('wires the definitions-only [] initializer to its own request-bound preparation loader', async () => {
+    const req = makeReq();
+    const key = `workspace_execute${Constants.mcp_delimiter}workspace-mcp`;
+    const config = {
+      ...makePrimaryConfig([]),
+      requestAttachments: [],
+      currentRequestAttachments: [],
+      toolRegistry: new Map([[key, { name: key }]]),
+    };
+    mockInitializeAgent.mockResolvedValue(config);
+    await initializeClient({
+      req,
+      res: {},
+      signal: new AbortController().signal,
+      endpointOption: makeEndpointOption(),
+    });
+    expect(agentClientArgs.attachments).toEqual([]);
+    expect(agentClientArgs.prepareWorkspaceAttachments).toBeInstanceOf(Function);
+    await agentClientArgs.prepareWorkspaceAttachments({
+      agent: { ...config, id: 'not-admitted' },
+      messages: [],
+      historicalFiles: [],
+    });
+    expect(mockLoadToolsForExecution).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])('defers host credential resolution with restored=%s', async (restored) => {
     const upstreamTokenProvider = jest.fn();
     const resolveUpstreamTokenProvider = jest.fn().mockResolvedValue(upstreamTokenProvider);

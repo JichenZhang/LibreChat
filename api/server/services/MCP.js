@@ -46,8 +46,6 @@ const {
   OpenIDReauthRequiredError,
   MCPAuthenticationRefreshError,
   MCPAuthenticationRejectedError,
-  prepareWorkspaceCopiesWithTools,
-  workspaceCopyGateResult,
   prepareMCPAuthorizationMutation,
 } = require('@librechat/api');
 const {
@@ -1355,37 +1353,6 @@ function createToolInstance({
        * as the jwt-bearer assertion.
        */
       let scopedToolArguments = toolArguments;
-      if (
-        normalizeServerName(serverName) === 'workspace-mcp' &&
-        serverToolName === 'workspace_execute' &&
-        Array.isArray(config?.configurable?.workspaceInputFiles) &&
-        config.configurable.workspaceInputFiles.length > 0
-      ) {
-        const preparation = await prepareWorkspaceCopiesWithTools({
-          files: config.configurable.workspaceInputFiles,
-          userId,
-          tenantId: effectiveUser?.tenantId,
-          db: {
-            getFile: db.getWorkspaceCopyFile,
-            claim: db.claimWorkspaceCopy,
-            advance: db.advanceWorkspaceCopy,
-            complete: db.completeWorkspaceCopy,
-            release: db.releaseWorkspaceCopy,
-          },
-          callTool: (name, args, transferSignal) =>
-            mcpManager.callTool({
-              ...sharedCallContext,
-              toolName: name,
-              toolArguments: args,
-              options: { signal: transferSignal },
-            }),
-          signal: derivedSignal,
-        });
-        if (!preparation.execute) {
-          const result = workspaceCopyGateResult(preparation);
-          return isAssistantsEndpoint(provider) ? result[0] : result;
-        }
-      }
       if (
         normalizeServerName(serverName) === 'workspace-mcp' &&
         serverToolName === 'workspace_stage_skill'

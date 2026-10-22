@@ -1309,37 +1309,6 @@ function createToolInstance({
 
       const customUserVars =
         config?.configurable?.userMCPAuthMap?.[`${Constants.mcp_prefix}${serverName}`];
-      const onOAuthCredentialsChanging = (scope) =>
-        prepareMCPAuthorizationMutation(scope, {
-          invalidateRecoveryGeneration: invalidateCachedTools,
-          persistPublicationRetry: persistMCPAuthorizationFenceRetry,
-          clearPublicationRetry: clearMCPAuthorizationFenceRetry,
-          clearLocalRecovery: (userId, changedServerName) =>
-            mcpManager.clearCatalogRecoveryState?.(userId, changedServerName),
-          retryDelaysMs: recoveryPolicy?.authorizationFenceRetryMs,
-          attemptTimeoutMs: recoveryPolicy?.authorizationFenceTimeoutMs,
-        });
-      const sharedCallContext = {
-        serverName,
-        serverConfig: capturedServerConfig,
-        provider,
-        user: effectiveUser,
-        requestBody: config?.configurable?.requestBody ?? capturedRequestBody,
-        requestScopedConnections:
-          config?.configurable?.requestScopedConnections ?? capturedRequestScopedConnections,
-        customUserVars,
-        flowManager,
-        tokenMethods: { findToken, createToken, updateToken, deleteTokens },
-        onOAuthCredentialsChanging,
-        oauthStart,
-        oauthEnd,
-        graphTokenResolver: getGraphApiToken,
-        oboTokenResolver: exchangeOboToken,
-        oboTrustChecker: createOboTrustChecker(),
-        upstreamTokenProvider: capturedUpstreamTokenProvider,
-        upstreamTokenProviderResolver: capturedUpstreamTokenProviderResolver,
-        oboIdentityContext: capturedOboIdentityContext,
-      };
 
       /**
        * The upstream-token closure is built at the request boundary (where
@@ -1371,14 +1340,46 @@ function createToolInstance({
       }
 
       const result = await mcpManager.callTool({
-        ...sharedCallContext,
+        serverName,
+        serverConfig: capturedServerConfig,
         /** The upstream server never sees stripped names — a key that dropped
          *  a redundant server-name prefix calls the ORIGINAL tool. */
         toolName: serverToolName,
+        provider,
         toolArguments: scopedToolArguments,
         options: {
           signal: derivedSignal,
         },
+        user: effectiveUser,
+        requestBody: config?.configurable?.requestBody ?? capturedRequestBody,
+        requestScopedConnections:
+          config?.configurable?.requestScopedConnections ?? capturedRequestScopedConnections,
+        customUserVars,
+        flowManager,
+        tokenMethods: {
+          findToken,
+          createToken,
+          updateToken,
+          deleteTokens,
+        },
+        onOAuthCredentialsChanging: (scope) =>
+          prepareMCPAuthorizationMutation(scope, {
+            invalidateRecoveryGeneration: invalidateCachedTools,
+            persistPublicationRetry: persistMCPAuthorizationFenceRetry,
+            clearPublicationRetry: clearMCPAuthorizationFenceRetry,
+            clearLocalRecovery: (userId, changedServerName) =>
+              mcpManager.clearCatalogRecoveryState?.(userId, changedServerName),
+            retryDelaysMs: recoveryPolicy?.authorizationFenceRetryMs,
+            attemptTimeoutMs: recoveryPolicy?.authorizationFenceTimeoutMs,
+          }),
+        oauthStart,
+        oauthEnd,
+        graphTokenResolver: getGraphApiToken,
+        oboTokenResolver: exchangeOboToken,
+        oboTrustChecker: createOboTrustChecker(),
+        upstreamTokenProvider: capturedUpstreamTokenProvider,
+        upstreamTokenProviderResolver: capturedUpstreamTokenProviderResolver,
+        oboIdentityContext: capturedOboIdentityContext,
       });
 
       if (isAssistantsEndpoint(provider) && Array.isArray(result)) {

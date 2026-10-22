@@ -180,6 +180,19 @@ export function createFileMethods(mongoose: typeof import('mongoose')): {
     ref: CodeEnvRef;
     legacyRef?: CodeEnvRef;
   }) => Promise<IMongoFile | null>;
+  getWorkspaceCopyFile: (scope: FileOwnerScope & { fileId: string }) => Promise<IMongoFile | null>;
+  claimWorkspaceCopy: (
+    scope: FileOwnerScope & { fileId: string; path: string; claimId: string },
+  ) => Promise<IMongoFile | null>;
+  advanceWorkspaceCopy: (
+    scope: FileOwnerScope & { fileId: string; path: string; nextPath: string; claimId: string },
+  ) => Promise<IMongoFile | null>;
+  completeWorkspaceCopy: (
+    scope: FileOwnerScope & { fileId: string; path: string; claimId: string },
+  ) => Promise<IMongoFile | null>;
+  releaseWorkspaceCopy: (
+    scope: FileOwnerScope & { fileId: string; path: string; claimId: string },
+  ) => Promise<boolean>;
   addFileEmbeddedEntity: (data: {
     file_id: string;
     entityId: string;
@@ -862,6 +875,87 @@ export function createFileMethods(mongoose: typeof import('mongoose')): {
     }).lean<IMongoFile>();
   }
 
+  function workspaceCopyFilter(
+    scope: FileOwnerScope & { fileId: string },
+  ): FilterQuery<IMongoFile> {
+    return {
+      file_id: scope.fileId,
+      user: scope.userId,
+      tenantId: scope.tenantId ?? null,
+      context: FileContext.message_attachment,
+    };
+  }
+
+  async function getWorkspaceCopyFile(
+    scope: FileOwnerScope & { fileId: string },
+  ): Promise<IMongoFile | null> {
+    const File = mongoose.models.File as Model<IMongoFile>;
+    return File.findOne(workspaceCopyFilter(scope)).lean<IMongoFile>();
+  }
+
+  async function claimWorkspaceCopy(
+    scope: FileOwnerScope & { fileId: string; path: string; claimId: string },
+  ): Promise<IMongoFile | null> {
+    const File = mongoose.models.File as Model<IMongoFile>;
+    return File.findOneAndUpdate(
+      { ...workspaceCopyFilter(scope), 'metadata.workspaceCopy': { $exists: false } },
+      {
+        $set: {
+          'metadata.workspaceCopy': { path: scope.path, status: 'claimed', claimId: scope.claimId },
+        },
+      },
+      { new: true },
+    ).lean<IMongoFile>();
+  }
+
+  async function advanceWorkspaceCopy(
+    scope: FileOwnerScope & { fileId: string; path: string; nextPath: string; claimId: string },
+  ): Promise<IMongoFile | null> {
+    const File = mongoose.models.File as Model<IMongoFile>;
+    return File.findOneAndUpdate(
+      {
+        ...workspaceCopyFilter(scope),
+        'metadata.workspaceCopy.path': scope.path,
+        'metadata.workspaceCopy.status': 'claimed',
+        'metadata.workspaceCopy.claimId': scope.claimId,
+      },
+      { $set: { 'metadata.workspaceCopy.path': scope.nextPath } },
+      { new: true },
+    ).lean<IMongoFile>();
+  }
+
+  async function completeWorkspaceCopy(
+    scope: FileOwnerScope & { fileId: string; path: string; claimId: string },
+  ): Promise<IMongoFile | null> {
+    const File = mongoose.models.File as Model<IMongoFile>;
+    return File.findOneAndUpdate(
+      {
+        ...workspaceCopyFilter(scope),
+        'metadata.workspaceCopy.path': scope.path,
+        'metadata.workspaceCopy.status': 'claimed',
+        'metadata.workspaceCopy.claimId': scope.claimId,
+      },
+      { $set: { 'metadata.workspaceCopy.status': 'ready' } },
+      { new: true },
+    ).lean<IMongoFile>();
+  }
+
+  async function releaseWorkspaceCopy(
+    scope: FileOwnerScope & { fileId: string; path: string; claimId: string },
+  ): Promise<boolean> {
+    const File = mongoose.models.File as Model<IMongoFile>;
+    const result = await File.updateOne(
+      {
+        ...workspaceCopyFilter(scope),
+        'metadata.workspaceCopy.path': scope.path,
+        'metadata.workspaceCopy.status': 'claimed',
+        'metadata.workspaceCopy.claimId': scope.claimId,
+      },
+      { $unset: { 'metadata.workspaceCopy': '' } },
+    );
+    return result.modifiedCount === 1;
+  }
+
   /** Background outputs commit only while their dispatch still owns the claimed filename. */
   async function commitCodeFile(
     data: CodeFileCommitData,
@@ -1219,6 +1313,11 @@ export function createFileMethods(mongoose: typeof import('mongoose')): {
     createFile,
     updateFile,
     updateFileCodeEnvRef,
+    getWorkspaceCopyFile,
+    claimWorkspaceCopy,
+    advanceWorkspaceCopy,
+    completeWorkspaceCopy,
+    releaseWorkspaceCopy,
     addFileEmbeddedEntity,
     updateFileUsage,
     deleteFile,

@@ -7,6 +7,8 @@ const {
   resolveDownloadPath,
   publishWorkspaceAttachment,
   WorkspaceHandoffError,
+  streamWorkspaceAttachment,
+  WORKSPACE_BINARY_MAX_BYTES,
 } = require('@librechat/api');
 const configMiddleware = require('~/server/middleware/config/app');
 const db = require('~/models');
@@ -20,7 +22,9 @@ const {
   withDeploymentSkillIds,
 } = require('~/server/services/Endpoints/agents/skillDeps');
 
-const MAX_BYTES = 10 * 1024 * 1024;
+// Workspace raw file transport is bounded separately from 32 KiB MCP text writes.
+const MAX_BYTES = WORKSPACE_BINARY_MAX_BYTES;
+const MAX_SKILL_BYTES = 10 * 1024 * 1024;
 const router = express.Router();
 
 function serviceAuthorized(header) {
@@ -53,7 +57,7 @@ async function boundedBytes(stream) {
   for await (const chunk of stream) {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     length += bytes.length;
-    if (length > MAX_BYTES) {
+    if (length > MAX_SKILL_BYTES) {
       stream.destroy?.();
       const error = new Error('FILE_TOO_LARGE');
       error.status = 413;
@@ -81,11 +85,14 @@ router.get('/attachments/:file_id', fileAccess, async (req, res) => {
     if (file.source === FileSources.text || file.bytes > MAX_BYTES) return res.sendStatus(413);
     const strategy = getStrategyFunctions(file.source);
     if (!strategy.getDownloadStream) return res.sendStatus(415);
-    const bytes = await boundedBytes(
-      await strategy.getDownloadStream(req, resolveDownloadPath(file)),
-    );
-    res.type('application/octet-stream').set('Cache-Control', 'no-store').send(bytes);
+    const stream = await strategy.getDownloadStream(req, resolveDownloadPath(file));
+    res.type('application/octet-stream').set('Cache-Control', 'no-store');
+    await streamWorkspaceAttachment(stream, res, MAX_BYTES, file.bytes);
   } catch (error) {
+    if (res.headersSent || res.destroyed) {
+      res.destroy();
+      return;
+    }
     return binaryFailure(res, error);
   }
 });
@@ -127,7 +134,7 @@ router.get('/skills/:name/files/*relativePath', async (req, res) => {
     const relativePath = req.params.relativePath?.join('/');
     if (!relativePath) return res.sendStatus(400);
     const file = await getSkillDbMethods().getSkillFileByPath(skill._id, relativePath);
-    if (!file || file.bytes > MAX_BYTES) return res.sendStatus(file ? 413 : 404);
+    if (!file || file.bytes > MAX_SKILL_BYTES) return res.sendStatus(file ? 413 : 404);
     const strategy = getSkillToolDeps().getStrategyFunctions(file.source);
     if (!strategy.getDownloadStream) return res.sendStatus(415);
     const bytes = await boundedBytes(

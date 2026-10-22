@@ -124,6 +124,10 @@ const {
   filterMalformedContentParts,
   countFormattedMessageTokens,
   prependFileContext,
+  prependContextText,
+  formatWorkspaceAttachmentReferences,
+  trustedWorkspaceFiles,
+  selectWorkspaceInputFiles,
   prependQuotes,
   applyAttachmentOnlyText,
   hydrateMissingIndexTokenCounts,
@@ -2471,6 +2475,12 @@ class AgentClient extends BaseClient {
       return contextPromise;
     };
 
+    let workspaceAttachmentContext;
+    const workspaceToolNames = [
+      ...(this.options.agent?.tools ?? []).map((tool) => tool?.name).filter(Boolean),
+      ...(this.options.agent?.toolDefinitions ?? []).map((tool) => tool?.name).filter(Boolean),
+    ];
+    this.workspaceInputFiles = [];
     if (requestAttachmentsSource) {
       const attachments = this.getProcessableAttachmentsForEndpoint(
         requestAttachments,
@@ -2505,9 +2515,47 @@ class AgentClient extends BaseClient {
         this.processAttachments(latestMessage, attachments),
       ]);
 
+      if (latestMessage?.isCreatedByUser === true) {
+        const processedIds = collectFileIds(files ?? []);
+        this.workspaceInputFiles = trustedWorkspaceFiles(
+          (this.options.agent?.currentRequestAttachments ?? []).filter((file) =>
+            processedIds.has(file.file_id),
+          ),
+          this.options.req.user?.id,
+          this.options.req.user?.tenantId,
+        );
+      }
+
       this.options.attachments = files;
     } else {
       agentScopedContextPromise = startAgentScopedContext();
+    }
+
+    if (
+      !requestAttachmentsSource &&
+      this.workspaceInputFiles.length === 0 &&
+      this.options.resendFiles !== false
+    ) {
+      this.workspaceInputFiles = selectWorkspaceInputFiles(
+        orderedMessages,
+        [...(this.authorizedHistoricalReplayFiles?.values() ?? [])],
+        this.options.req.user?.id,
+        this.options.req.user?.tenantId,
+      );
+    }
+    workspaceAttachmentContext = formatWorkspaceAttachmentReferences({
+      files: this.workspaceInputFiles,
+      toolNames: workspaceToolNames,
+      userId: this.options.req.user?.id,
+      tenantId: this.options.req.user?.tenantId,
+    });
+    if (workspaceAttachmentContext) {
+      assertModelBoundContent({
+        onTraversalFailure: reportLocatorTraversalFailure,
+        filters: this.options.req.config?.filters,
+        legacyPii: this.options.req.config?.messageFilter?.pii,
+        submittedMessages: [{ role: 'user', content: workspaceAttachmentContext }],
+      });
     }
 
     const attachmentTelemetryFiles = [
@@ -2592,6 +2640,13 @@ class AgentClient extends BaseClient {
         hasFileContext = true;
         prependFileContext(formattedMessage, message.fileContext);
       }
+      const hasWorkspaceAttachmentContext =
+        i === orderedMessages.length - 1 &&
+        message.isCreatedByUser === true &&
+        !!workspaceAttachmentContext;
+      if (hasWorkspaceAttachmentContext) {
+        prependContextText(formattedMessage, workspaceAttachmentContext);
+      }
 
       /**
        * Durably re-merge quoted excerpts into every user turn that carries them
@@ -2637,6 +2692,7 @@ class AgentClient extends BaseClient {
        */
       const needsCanonicalTokenCount =
         !hasDbTokenCount ||
+        hasWorkspaceAttachmentContext ||
         (this.isVisionModel && (message.image_urls || message.files)) ||
         (Array.isArray(message.quotes) && message.quotes.length > 0);
 
@@ -2647,7 +2703,7 @@ class AgentClient extends BaseClient {
          *  with a dropped summary), the canonical count must be taken from the
          *  message as stored. */
         let countSurface = formattedMessage;
-        if (message.fileContext || droppedPromptSummary) {
+        if (message.fileContext || droppedPromptSummary || hasWorkspaceAttachmentContext) {
           memoryFormattedMessages[i] = buildMemoryFormattedMessage(message);
           countSurface = memoryFormattedMessages[i];
         }
@@ -2655,7 +2711,7 @@ class AgentClient extends BaseClient {
       }
 
       const promptMessageTokenCount =
-        message.fileContext || droppedPromptSummary
+        message.fileContext || droppedPromptSummary || hasWorkspaceAttachmentContext
           ? countFormattedMessageTokens(formattedMessage, encoding)
           : canonicalTokenCount;
 
@@ -4563,6 +4619,7 @@ class AgentClient extends BaseClient {
                 this.options.req.resolvedConversation?.codeWorkspaces,
             }),
           user: createSafeUser(this.options.req.user),
+          workspaceInputFiles: this.workspaceInputFiles ?? [],
         },
         recursionLimit: resolveRecursionLimit(agentsEConfig, this.options.agent),
         signal: abortController.signal,
@@ -5367,6 +5424,7 @@ class AgentClient extends BaseClient {
                 this.options.req.resolvedConversation?.codeWorkspaces,
             }),
           user: createSafeUser(this.options.req.user),
+          workspaceInputFiles: this.workspaceInputFiles ?? [],
         },
         recursionLimit: resolveRecursionLimit(agentsEConfig, this.options.agent),
         signal: abortController.signal,
@@ -5453,6 +5511,20 @@ class AgentClient extends BaseClient {
           .call(this, requestFiles)
           .filter((file) => !file?.file_id || !checkpointFileIds.has(file.file_id)),
       ];
+      const resumeCurrentWorkspaceFiles = trustedWorkspaceFiles(
+        this.options.agent?.currentRequestAttachments ?? [],
+        this.options.req.user?.id,
+        this.options.req.user?.tenantId,
+      );
+      config.configurable.workspaceInputFiles =
+        resumeCurrentWorkspaceFiles.length > 0
+          ? resumeCurrentWorkspaceFiles
+          : selectWorkspaceInputFiles(
+              storedMessages,
+              resumeSharedFiles,
+              this.options.req.user?.id,
+              this.options.req.user?.tenantId,
+            );
       const resumeSharedFileIds = collectFileIds(resumeSharedFiles);
       const resumeEndpointsByAgentId = new Map(
         agents

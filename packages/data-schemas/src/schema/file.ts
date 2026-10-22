@@ -19,6 +19,15 @@ const runFileProvenanceSchema = new Schema<RunFileProvenance>(
   { _id: false },
 );
 
+const workspaceCopySchema = new Schema(
+  {
+    path: { type: String, required: true },
+    status: { type: String, enum: ['claimed', 'ready'], required: true },
+    claimId: { type: String, required: true },
+  },
+  { _id: false },
+);
+
 const file: Schema<IMongoFile> = new Schema(
   {
     user: {
@@ -175,6 +184,10 @@ const file: Schema<IMongoFile> = new Schema(
        *  the stored type so a later resolution asks the same question. */
       routingMimeType: {
         type: String,
+        default: undefined,
+      },
+      workspaceCopy: {
+        type: workspaceCopySchema,
         default: undefined,
       },
     },

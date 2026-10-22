@@ -4042,7 +4042,10 @@ describe('AgentClient - titleConvo', () => {
     it('uses a non-streaming client for titles without changing chat options', async () => {
       client.options.streaming = true;
 
-      await client.titleConvo({ text: 'Test conversation', abortController: new AbortController() });
+      await client.titleConvo({
+        text: 'Test conversation',
+        abortController: new AbortController(),
+      });
 
       const generateTitleCall = mockRun.generateTitle.mock.calls[0][0];
       expect(generateTitleCall.clientOptions.streaming).toBe(false);
@@ -7013,6 +7016,121 @@ describe('AgentClient - titleConvo', () => {
       expect(result.prompt[2].content.indexOf('Current turn file body')).toBeLessThan(
         result.prompt[2].content.indexOf('What is written here?'),
       );
+    });
+
+    it('shows the authorized current PPT working path when Workspace execute is loaded', async () => {
+      const file = makeUploadedFile(
+        'current-ppt-id',
+        '演示.pptx',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      );
+      file.llmDeliveryPath = 'none';
+      file.context = 'message_attachment';
+      mockAgent.currentRequestAttachments = [file];
+      mockAgent.tools = [{ name: `workspace_execute${Constants.mcp_delimiter}workspace-mcp` }];
+      client.options.attachments = [file];
+
+      const result = await client.buildMessages(
+        [
+          {
+            messageId: 'msg-1',
+            sender: 'User',
+            text: '请处理刚上传的文件。',
+            isCreatedByUser: true,
+          },
+        ],
+        'msg-1',
+        {},
+      );
+
+      const content = JSON.stringify(result.prompt[0].content);
+      expect(content).not.toContain('current-ppt-id');
+      expect(content).toContain('演示.pptx');
+      expect(content).toContain('请处理刚上传的文件。');
+      expect(content).toContain('/workspace/Personal/聊天上传/演示.pptx');
+      expect(content).toContain('command_not_run');
+      expect(client.workspaceInputFiles.map((input) => input.file_id)).toEqual(['current-ppt-id']);
+      expect(JSON.stringify(client.memoryPayload ?? [])).not.toContain('current-ppt-id');
+      expect(result.tokenCountMap['msg-1']).toBeLessThanOrEqual(result.promptTokens);
+    });
+
+    it('does not expose current Workspace paths without the execute tool', async () => {
+      const file = makeUploadedFile(
+        'current-ppt-id',
+        '演示.pptx',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      );
+      file.llmDeliveryPath = 'none';
+      file.context = 'message_attachment';
+      mockAgent.currentRequestAttachments = [file];
+      client.options.attachments = [file];
+
+      const result = await client.buildMessages(
+        [
+          {
+            messageId: 'msg-1',
+            sender: 'User',
+            text: '请处理刚上传的文件。',
+            isCreatedByUser: true,
+          },
+        ],
+        'msg-1',
+        {},
+      );
+
+      expect(JSON.stringify(result.prompt[0].content)).not.toContain('current-ppt-id');
+      expect(JSON.stringify(result.prompt[0].content)).not.toContain(
+        '/workspace/Personal/聊天上传',
+      );
+    });
+
+    it('reuses the latest authorized attachment group on a later branch turn', async () => {
+      const selected = makeUploadedFile('previous-id', '演示.pptx', 'application/octet-stream');
+      selected.context = 'message_attachment';
+      selected.metadata = {
+        workspaceCopy: { path: '聊天上传/演示 (2).pptx', status: 'ready', claimId: 'claim' },
+      };
+      const sibling = makeUploadedFile('sibling-id', '私有.pptx', 'application/octet-stream');
+      sibling.context = 'message_attachment';
+      mockAgent.tools = [{ name: `workspace_execute${Constants.mcp_delimiter}workspace-mcp` }];
+      client.options.resendFiles = true;
+      client.authorizedHistoricalReplayFiles = new Map([
+        [selected.file_id, selected],
+        [sibling.file_id, sibling],
+      ]);
+      const result = await client.buildMessages(
+        [
+          {
+            messageId: 'msg-1',
+            parentMessageId: null,
+            sender: 'User',
+            text: '上传附件',
+            isCreatedByUser: true,
+            files: [{ file_id: selected.file_id }],
+          },
+          {
+            messageId: 'msg-2',
+            parentMessageId: 'msg-1',
+            sender: 'Assistant',
+            text: '已收到',
+            isCreatedByUser: false,
+          },
+          {
+            messageId: 'msg-3',
+            parentMessageId: 'msg-2',
+            sender: 'User',
+            text: '继续处理刚才的文件',
+            isCreatedByUser: true,
+          },
+        ],
+        'msg-3',
+        {},
+      );
+      const latest = JSON.stringify(result.prompt.at(-1).content);
+      expect(latest).toContain('/workspace/Personal/聊天上传/演示 (2).pptx');
+      expect(latest).not.toContain('previous-id');
+      expect(latest).not.toContain('私有.pptx');
+      expect(client.workspaceInputFiles.map((input) => input.file_id)).toEqual(['previous-id']);
     });
 
     it('quote-merges historical steer parts into the prompt AND the memory copy', async () => {

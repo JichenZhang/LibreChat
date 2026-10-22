@@ -214,6 +214,12 @@ export type TFile = {
     destinationChosen?: boolean;
     /** The type the delivery route was resolved against, when conversion changed it. */
     routingMimeType?: string;
+    /** Personal Workspace working copy of this native chat attachment. */
+    workspaceCopy?: {
+      path: string;
+      status: 'claimed' | 'ready';
+      claimId: string;
+    };
   };
   llmDeliveryPath?: 'provider' | 'text' | 'none';
   createdAt?: string | Date;

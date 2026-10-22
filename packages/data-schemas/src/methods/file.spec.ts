@@ -2332,4 +2332,59 @@ describe('File Methods', () => {
       });
     });
   });
+  describe('Workspace copy claim', () => {
+    it('binds the flat path to one owner and lets only one same-file claimant win', async () => {
+      const owner = new mongoose.Types.ObjectId().toString();
+      const other = new mongoose.Types.ObjectId().toString();
+      const fileId = uuidv4();
+      await runAsSystem(() =>
+        fileMethods.createFile(
+          {
+            file_id: fileId,
+            user: new mongoose.Types.ObjectId(owner),
+            tenantId: 'tenant-a',
+            filename: '演示.pptx',
+            filepath: '/uploads/演示.pptx',
+            context: FileContext.message_attachment,
+            source: 'local',
+            type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            bytes: 13_393_065,
+            usage: 1,
+          },
+          true,
+        ),
+      );
+      const scope = { fileId, userId: owner, tenantId: 'tenant-a', path: '聊天上传/演示.pptx' };
+      const [first, second] = await runAsSystem(() =>
+        Promise.all([
+          fileMethods.claimWorkspaceCopy({ ...scope, claimId: 'first' }),
+          fileMethods.claimWorkspaceCopy({ ...scope, claimId: 'second' }),
+        ]),
+      );
+      expect(Number(first !== null) + Number(second !== null)).toBe(1);
+      const winner = first ? 'first' : 'second';
+      expect(
+        await runAsSystem(() =>
+          fileMethods.getWorkspaceCopyFile({ fileId, userId: other, tenantId: 'tenant-a' }),
+        ),
+      ).toBeNull();
+      expect(
+        await runAsSystem(() =>
+          fileMethods.getWorkspaceCopyFile({ fileId, userId: owner, tenantId: 'tenant-b' }),
+        ),
+      ).toBeNull();
+      expect(
+        await runAsSystem(() => fileMethods.completeWorkspaceCopy({ ...scope, claimId: 'loser' })),
+      ).toBeNull();
+      expect(
+        await runAsSystem(() => fileMethods.completeWorkspaceCopy({ ...scope, claimId: winner })),
+      ).not.toBeNull();
+      expect(
+        (await runAsSystem(() => fileMethods.getWorkspaceCopyFile(scope)))?.metadata?.workspaceCopy,
+      ).toMatchObject({ path: scope.path, status: 'ready', claimId: winner });
+      expect(
+        await runAsSystem(() => fileMethods.claimWorkspaceCopy({ ...scope, claimId: 'late' })),
+      ).toBeNull();
+    });
+  });
 });

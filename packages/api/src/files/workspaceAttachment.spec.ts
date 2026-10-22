@@ -1,10 +1,67 @@
 import mongoose from 'mongoose';
+import { Readable, Writable } from 'node:stream';
 import { fileSchema } from '@librechat/data-schemas';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import { FileContext, FileSources } from 'librechat-data-provider';
 import type { IMongoFile } from '@librechat/data-schemas';
 import type { WorkspaceAttachmentDependencies } from './workspaceAttachment';
-import { publishWorkspaceAttachment, WorkspaceHandoffError } from './workspaceAttachment';
+import {
+  publishWorkspaceAttachment,
+  streamWorkspaceAttachment,
+  WorkspaceHandoffError,
+} from './workspaceAttachment';
+
+describe('Workspace attachment stream bound', () => {
+  it('copies incident-sized bytes and rejects an unknown-length stream beyond 64 MiB', async () => {
+    const incidentBytes = Buffer.alloc(13_393_065, 0x5a);
+    const chunks: Buffer[] = [];
+    await streamWorkspaceAttachment(
+      Readable.from([incidentBytes]),
+      new Writable({
+        write(chunk: Buffer, _encoding, done) {
+          chunks.push(chunk);
+          done();
+        },
+      }),
+      64 << 20,
+    );
+    expect(Buffer.concat(chunks)).toEqual(incidentBytes);
+
+    await expect(
+      streamWorkspaceAttachment(
+        Readable.from([Buffer.from('short')]),
+        new Writable({
+          write(_chunk, _encoding, done) {
+            done();
+          },
+        }),
+        64 << 20,
+        6,
+      ),
+    ).rejects.toThrow('WORKSPACE_FILE_SIZE_MISMATCH');
+
+    let delivered = 0;
+    const oneMiB = Buffer.alloc(1 << 20, 0x42);
+    const unboundedSource = Readable.from(
+      (async function* () {
+        for (let index = 0; index < 65; index++) yield oneMiB;
+      })(),
+    );
+    await expect(
+      streamWorkspaceAttachment(
+        unboundedSource,
+        new Writable({
+          write(chunk: Buffer, _encoding, done) {
+            delivered += chunk.length;
+            done();
+          },
+        }),
+        64 << 20,
+      ),
+    ).rejects.toThrow('WORKSPACE_FILE_TOO_LARGE');
+    expect(delivered).toBeLessThanOrEqual(64 << 20);
+  });
+});
 
 describe('Workspace attachment contract with native file indexes', () => {
   let mongo: MongoMemoryServer;

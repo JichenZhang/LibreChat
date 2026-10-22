@@ -46,6 +46,8 @@ const {
   OpenIDReauthRequiredError,
   MCPAuthenticationRefreshError,
   MCPAuthenticationRejectedError,
+  prepareWorkspaceCopiesWithTools,
+  workspaceCopyGateResult,
   prepareMCPAuthorizationMutation,
 } = require('@librechat/api');
 const {
@@ -1309,6 +1311,37 @@ function createToolInstance({
 
       const customUserVars =
         config?.configurable?.userMCPAuthMap?.[`${Constants.mcp_prefix}${serverName}`];
+      const onOAuthCredentialsChanging = (scope) =>
+        prepareMCPAuthorizationMutation(scope, {
+          invalidateRecoveryGeneration: invalidateCachedTools,
+          persistPublicationRetry: persistMCPAuthorizationFenceRetry,
+          clearPublicationRetry: clearMCPAuthorizationFenceRetry,
+          clearLocalRecovery: (userId, changedServerName) =>
+            mcpManager.clearCatalogRecoveryState?.(userId, changedServerName),
+          retryDelaysMs: recoveryPolicy?.authorizationFenceRetryMs,
+          attemptTimeoutMs: recoveryPolicy?.authorizationFenceTimeoutMs,
+        });
+      const sharedCallContext = {
+        serverName,
+        serverConfig: capturedServerConfig,
+        provider,
+        user: effectiveUser,
+        requestBody: config?.configurable?.requestBody ?? capturedRequestBody,
+        requestScopedConnections:
+          config?.configurable?.requestScopedConnections ?? capturedRequestScopedConnections,
+        customUserVars,
+        flowManager,
+        tokenMethods: { findToken, createToken, updateToken, deleteTokens },
+        onOAuthCredentialsChanging,
+        oauthStart,
+        oauthEnd,
+        graphTokenResolver: getGraphApiToken,
+        oboTokenResolver: exchangeOboToken,
+        oboTrustChecker: createOboTrustChecker(),
+        upstreamTokenProvider: capturedUpstreamTokenProvider,
+        upstreamTokenProviderResolver: capturedUpstreamTokenProviderResolver,
+        oboIdentityContext: capturedOboIdentityContext,
+      };
 
       /**
        * The upstream-token closure is built at the request boundary (where
@@ -1322,6 +1355,34 @@ function createToolInstance({
        * as the jwt-bearer assertion.
        */
       let scopedToolArguments = toolArguments;
+      if (
+        normalizeServerName(serverName) === 'workspace-mcp' &&
+        serverToolName === 'workspace_execute' &&
+        Array.isArray(config?.configurable?.workspaceInputFiles) &&
+        config.configurable.workspaceInputFiles.length > 0
+      ) {
+        const preparation = await prepareWorkspaceCopiesWithTools({
+          files: config.configurable.workspaceInputFiles,
+          userId,
+          tenantId: effectiveUser?.tenantId,
+          db: {
+            getFile: db.getWorkspaceCopyFile,
+            claim: db.claimWorkspaceCopy,
+            advance: db.advanceWorkspaceCopy,
+            complete: db.completeWorkspaceCopy,
+            release: db.releaseWorkspaceCopy,
+          },
+          callTool: (name, args, transferSignal) =>
+            mcpManager.callTool({
+              ...sharedCallContext,
+              toolName: name,
+              toolArguments: args,
+              options: { signal: transferSignal },
+            }),
+          signal: derivedSignal,
+        });
+        if (!preparation.execute) return workspaceCopyGateResult(preparation);
+      }
       if (
         normalizeServerName(serverName) === 'workspace-mcp' &&
         serverToolName === 'workspace_stage_skill'
@@ -1340,46 +1401,14 @@ function createToolInstance({
       }
 
       const result = await mcpManager.callTool({
-        serverName,
-        serverConfig: capturedServerConfig,
+        ...sharedCallContext,
         /** The upstream server never sees stripped names — a key that dropped
          *  a redundant server-name prefix calls the ORIGINAL tool. */
         toolName: serverToolName,
-        provider,
         toolArguments: scopedToolArguments,
         options: {
           signal: derivedSignal,
         },
-        user: effectiveUser,
-        requestBody: config?.configurable?.requestBody ?? capturedRequestBody,
-        requestScopedConnections:
-          config?.configurable?.requestScopedConnections ?? capturedRequestScopedConnections,
-        customUserVars,
-        flowManager,
-        tokenMethods: {
-          findToken,
-          createToken,
-          updateToken,
-          deleteTokens,
-        },
-        onOAuthCredentialsChanging: (scope) =>
-          prepareMCPAuthorizationMutation(scope, {
-            invalidateRecoveryGeneration: invalidateCachedTools,
-            persistPublicationRetry: persistMCPAuthorizationFenceRetry,
-            clearPublicationRetry: clearMCPAuthorizationFenceRetry,
-            clearLocalRecovery: (userId, changedServerName) =>
-              mcpManager.clearCatalogRecoveryState?.(userId, changedServerName),
-            retryDelaysMs: recoveryPolicy?.authorizationFenceRetryMs,
-            attemptTimeoutMs: recoveryPolicy?.authorizationFenceTimeoutMs,
-          }),
-        oauthStart,
-        oauthEnd,
-        graphTokenResolver: getGraphApiToken,
-        oboTokenResolver: exchangeOboToken,
-        oboTrustChecker: createOboTrustChecker(),
-        upstreamTokenProvider: capturedUpstreamTokenProvider,
-        upstreamTokenProviderResolver: capturedUpstreamTokenProviderResolver,
-        oboIdentityContext: capturedOboIdentityContext,
       });
 
       if (isAssistantsEndpoint(provider) && Array.isArray(result)) {

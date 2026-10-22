@@ -1,6 +1,8 @@
 const express = require('express');
 const request = require('supertest');
 const { Readable } = require('node:stream');
+const { createHash } = require('node:crypto');
+const { readFileSync } = require('node:fs');
 const {
   FileContext,
   FileSources,
@@ -14,6 +16,7 @@ jest.mock('@librechat/data-schemas', () => ({
 jest.mock('@librechat/api', () => ({
   resolveDownloadPath: (file) => file.filepath,
   ...jest.requireActual('../../../packages/api/src/files/workspaceAttachment'),
+  ...jest.requireActual('../../../packages/api/src/files/workspaceCopy'),
   AccessControlService: jest.fn(),
 }));
 jest.mock('~/server/services/Files/retention', () => ({
@@ -148,6 +151,41 @@ describe('Garden native Workspace file adapter', () => {
       .set(auth('employee-b'))
       .expect(403);
     await request(app).get('/api/garden/workspace/attachments/file-1').expect(401);
+  });
+
+  it('hands off an incident-sized PPTX through input and native output without changing bytes', async () => {
+    binary = process.env.WORKSPACE_INCIDENT_PPTX_FIXTURE
+      ? readFileSync(process.env.WORKSPACE_INCIDENT_PPTX_FIXTURE)
+      : Buffer.alloc(13_393_065, 0x5a);
+    expect(binary.length).toBe(13_393_065);
+    db.getFiles.mockResolvedValue([
+      {
+        file_id: 'file-1',
+        user: 'u1',
+        tenantId: 'tenant-1',
+        filename: '演示.pptx',
+        filepath: '/uploads/u1/演示.pptx',
+        source: FileSources.local,
+        bytes: binary.length,
+      },
+    ]);
+    const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+    const input = await request(app)
+      .get('/api/garden/workspace/attachments/file-1')
+      .set(auth())
+      .expect(200);
+    expect(digest(input.body)).toBe(digest(binary));
+    const edited = process.env.WORKSPACE_EDITED_PPTX_FIXTURE
+      ? readFileSync(process.env.WORKSPACE_EDITED_PPTX_FIXTURE)
+      : binary;
+    const output = await request(app)
+      .post('/api/garden/workspace/outputs?filename=%E6%BC%94%E7%A4%BA.pptx')
+      .set(auth())
+      .set('Content-Type', 'application/octet-stream')
+      .send(edited)
+      .expect(201);
+    expect(output.body.filename).toBe('演示.pptx');
+    expect(digest(saveBuffer.mock.calls.at(-1)[0].buffer)).toBe(digest(edited));
   });
 
   it('returns native Skill relative assets only within current user access', async () => {

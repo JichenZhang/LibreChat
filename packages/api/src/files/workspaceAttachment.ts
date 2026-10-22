@@ -1,6 +1,33 @@
+import { Transform } from 'node:stream';
 import { randomUUID } from 'node:crypto';
+import { pipeline } from 'node:stream/promises';
 import { FileContext, FileSources } from 'librechat-data-provider';
+import type { Readable, Writable } from 'node:stream';
 import type { TFile } from 'librechat-data-provider';
+
+/** Preserve HTTP backpressure while enforcing the Workspace binary contract. */
+export async function streamWorkspaceAttachment(
+  source: Readable,
+  destination: Writable,
+  maxBytes: number,
+  expectedBytes?: number,
+): Promise<void> {
+  let total = 0;
+  const limit = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      total += chunk.length;
+      callback(total <= maxBytes ? null : new Error('WORKSPACE_FILE_TOO_LARGE'), chunk);
+    },
+    flush(callback) {
+      callback(
+        expectedBytes == null || total === expectedBytes
+          ? null
+          : new Error('WORKSPACE_FILE_SIZE_MISMATCH'),
+      );
+    },
+  });
+  await pipeline(source, limit, destination);
+}
 
 type AttachmentRecord = Pick<
   TFile,

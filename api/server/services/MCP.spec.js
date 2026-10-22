@@ -81,6 +81,11 @@ jest.mock('~/models', () => ({
   updateToken: jest.fn(),
   deleteTokens: jest.fn(),
   getRoleByName: jest.fn(),
+  getWorkspaceCopyFile: jest.fn(),
+  claimWorkspaceCopy: jest.fn(),
+  advanceWorkspaceCopy: jest.fn(),
+  completeWorkspaceCopy: jest.fn(),
+  releaseWorkspaceCopy: jest.fn(),
 }));
 jest.mock('~/server/services/Endpoints/agents/skillDeps', () => ({
   getSkillDbMethods: jest.fn(),
@@ -1551,6 +1556,104 @@ describe('User parameter passing tests', () => {
   });
 
   describe('createMCPTool', () => {
+    it('prepares a trusted chat PPT before execute and runs the command only on the second call', async () => {
+      const user = { id: 'owner', tenantId: 'tenant', role: 'USER' };
+      const db = require('~/models');
+      db.getRoleByName.mockResolvedValue({
+        permissions: { [PermissionTypes.MCP_SERVERS]: { [Permissions.USE]: true } },
+      });
+      let copy;
+      db.getWorkspaceCopyFile.mockImplementation(async () => ({
+        metadata: { workspaceCopy: copy },
+      }));
+      db.claimWorkspaceCopy.mockImplementation(async ({ path, claimId }) => {
+        if (copy) return null;
+        copy = { path, claimId, status: 'claimed' };
+        return {};
+      });
+      db.advanceWorkspaceCopy.mockImplementation(async ({ path, nextPath, claimId }) => {
+        if (copy.path !== path || copy.claimId !== claimId) return null;
+        copy.path = nextPath;
+        return {};
+      });
+      db.completeWorkspaceCopy.mockImplementation(async ({ path, claimId }) => {
+        if (copy.path !== path || copy.claimId !== claimId) return null;
+        copy.status = 'ready';
+        return {};
+      });
+      const callTool = jest.fn(async ({ toolName, toolArguments }) => {
+        if (toolName === 'workspace_import_attachment') {
+          if (toolArguments.path === '聊天上传/演示.pptx') {
+            return [JSON.stringify({ ok: false, error: { code: 'CONFLICT' } }), undefined];
+          }
+          return [JSON.stringify({ ok: true }), undefined];
+        }
+        if (toolName === 'workspace_list') {
+          return [
+            JSON.stringify({ ok: true, entries: [{ name: '演示 (2).pptx', type: 'regular' }] }),
+            undefined,
+          ];
+        }
+        return [JSON.stringify({ ok: true, stdout: 'edited' }), undefined];
+      });
+      mockGetMCPManager.mockReturnValue({ callTool });
+      const key = `workspace_execute${D}workspace-mcp`;
+      const tool = await createMCPTool({
+        user,
+        toolKey: key,
+        provider: 'openai',
+        availableTools: {
+          [key]: {
+            serverToolName: 'workspace_execute',
+            function: {
+              name: key,
+              description: 'Execute',
+              parameters: { type: 'object', properties: { command: { type: 'string' } } },
+            },
+          },
+        },
+      });
+      const config = {
+        configurable: {
+          user,
+          user_id: 'owner',
+          workspaceInputFiles: [
+            {
+              file_id: 'ppt-id',
+              filename: '演示.pptx',
+              user: 'owner',
+              tenantId: 'tenant',
+              context: 'message_attachment',
+              source: 'local',
+            },
+          ],
+        },
+        metadata: { provider: 'openai', thread_id: 'thread-1', run_id: 'run-1' },
+        toolCall: {},
+      };
+      const first = await tool.invoke(
+        { command: 'python edit.py /workspace/Personal/聊天上传/演示.pptx' },
+        config,
+      );
+      expect(JSON.stringify(first)).toContain('command_not_run');
+      expect(JSON.stringify(first)).toContain('/workspace/Personal/聊天上传/演示 (2).pptx');
+      expect(callTool.mock.calls.map(([arg]) => arg.toolName)).toEqual([
+        'workspace_import_attachment',
+        'workspace_import_attachment',
+      ]);
+      await tool.invoke(
+        { command: 'python edit.py /workspace/Personal/聊天上传/演示 (2).pptx' },
+        config,
+      );
+      expect(callTool.mock.calls.map(([arg]) => arg.toolName)).toEqual([
+        'workspace_import_attachment',
+        'workspace_import_attachment',
+        'workspace_list',
+        'workspace_execute',
+      ]);
+      expect(callTool.mock.calls.at(-1)[0].toolArguments.command).toContain('演示 (2).pptx');
+    });
+
     it('pins Workspace Skill staging to the trusted selected Agent Skill', async () => {
       const user = { id: 'skill-scope-user', role: 'USER' };
       const { getRoleByName } = require('~/models');

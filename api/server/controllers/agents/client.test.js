@@ -7334,12 +7334,27 @@ describe('AgentClient - titleConvo', () => {
     );
 
     it.each([
-      [false, 'none'],
-      [false, 'text'],
-      [false, undefined],
+      { delivery: 'none' },
+      { delivery: 'text' },
+      { delivery: undefined },
+      ...[undefined, 64].flatMap((totalMiB) =>
+        ['older-first', 'nearest-first', 'exclude-older'].map((order) => ({
+          delivery: 'none',
+          totalMiB,
+          olderMiB: totalMiB === undefined ? 500 : 40,
+          order,
+        })),
+      ),
+      ...['older-first', 'nearest-first'].map((order) => ({
+        delivery: 'none',
+        totalMiB: 64,
+        olderMiB: 40,
+        order,
+        sameGroup: true,
+      })),
     ])(
-      'runs [] initialization and real history (summarize=%s, delivery=%s) through native invoke to the first fake model input',
-      async (summarize, delivery) => {
+      'runs [] initialization and real history %j through native invoke to the first fake model input',
+      async ({ delivery, totalMiB, olderMiB, order, sameGroup = false }) => {
         const initialized = await initializeWorkspaceAgent(mockReq);
         expect(initialized.requestAttachments).toEqual([]);
         expect(initialized.tools).toEqual([]);
@@ -7353,26 +7368,47 @@ describe('AgentClient - titleConvo', () => {
           ),
           context: 'message_attachment',
           llmDeliveryPath: delivery,
+          ...(olderMiB ? { bytes: 40 * 1024 * 1024 } : {}),
           ...(delivery === 'text'
             ? { text: 'Extracted slide text', metadata: { destinationChosen: true } }
             : {}),
         };
         client.options.resendFiles = true;
         initialized.resendFiles = true;
-        client.shouldSummarize = summarize;
+        client.shouldSummarize = false;
+        if (totalMiB !== undefined) {
+          mockReq.config.fileConfig = {
+            endpoints: { [initialized.endpoint]: { fileSizeLimit: 64, totalSizeLimit: totalMiB } },
+          };
+        }
+        // Size metadata exercises admission without allocating a 500 MiB transport fixture.
+        const old = {
+          ...file,
+          file_id: 'old-budget',
+          filename: 'old.pptx',
+          bytes: (olderMiB ?? 0) * 1024 * 1024,
+        };
+        let rows = [file];
+        if (olderMiB && order !== 'exclude-older') {
+          rows = order === 'older-first' ? [old, file] : [file, old];
+        }
         const models = require('~/models');
         models.getFiles.mockImplementation(async (filter) =>
-          filter.user === mockReq.user.id && filter.file_id.$in.includes(file.file_id)
-            ? [file]
-            : [],
+          rows.filter(
+            (row) => filter.user === mockReq.user.id && filter.file_id.$in.includes(row.file_id),
+          ),
         );
-        const state = installWorkspacePreparation([], [file], ['primary-agent'], true);
+        const state = installWorkspacePreparation([], rows, ['primary-agent'], true);
         models.getMessages.mockResolvedValue([
+          ...(olderMiB
+            ? [{ messageId: 'old', isCreatedByUser: true, text: 'old', files: [old] }]
+            : []),
           {
             messageId: 'prior',
+            parentMessageId: olderMiB ? 'old' : null,
             isCreatedByUser: true,
             text: 'upload',
-            files: [{ file_id: file.file_id }],
+            files: [{ file_id: file.file_id }, ...(sameGroup ? [{ file_id: old.file_id }] : [])],
           },
           {
             messageId: 'summary',
@@ -7391,11 +7427,7 @@ describe('AgentClient - titleConvo', () => {
         ]);
         const history = await client.loadHistory('convo-123', 'followup');
         expect(client.authorizedHistoricalFiles.has(file.file_id)).toBe(true);
-        if (!summarize) {
-          expect(client.authorizedHistoricalReplayFiles.has(file.file_id)).toBe(
-            delivery !== 'none',
-          );
-        }
+        expect(client.authorizedHistoricalReplayFiles.has(file.file_id)).toBe(delivery !== 'none');
         expect(models.getFiles).toHaveBeenCalledTimes(1);
         const result = await client.buildMessages(history, 'followup', {});
         const { createRun } = jest.requireActual('@librechat/api');
@@ -7405,6 +7437,10 @@ describe('AgentClient - titleConvo', () => {
         const fakeModel = jest.fn(async (_url, init) => {
           const body = JSON.parse(init.body);
           expect(JSON.stringify(body.messages)).toContain(finalPath);
+          expect(JSON.stringify(body.messages)).not.toContain('old.pptx');
+          expect(JSON.stringify(body.messages)).not.toContain(
+            '/workspace/Personal/聊天上传/演示.pptx',
+          );
           expect(JSON.stringify(body.messages)).not.toContain('suggested_path');
           expect(JSON.stringify(tokenCounter.mock.calls)).toContain(finalPath);
           expect(state.calls).toEqual([
@@ -7450,6 +7486,7 @@ describe('AgentClient - titleConvo', () => {
           },
         );
         expect(fakeModel).toHaveBeenCalledTimes(1);
+        expect([...state.copies.keys()]).toEqual([file.file_id]);
         // A later request must freshly list the mapping without replacing user edits.
         const copyPath = '聊天上传/演示 (2).pptx';
         state.contents.set(copyPath, 'edited-work-copy');
@@ -7475,6 +7512,10 @@ describe('AgentClient - titleConvo', () => {
       'resend-disabled',
       'agent-disabled',
       'endpoint-disabled',
+      'endpoint-off',
+      'aggregate-rejected',
+      'size-rejected',
+      'current-rejected',
     ])(
       'preserves %s admission through real [] initialization and history loading',
       async (scenario) => {
@@ -7493,8 +7534,9 @@ describe('AgentClient - titleConvo', () => {
           context: 'message_attachment',
           llmDeliveryPath: 'none',
           tenantId: 'tenant',
+          bytes: 40 * 1024 * 1024,
         };
-        const old = { ...file, file_id: 'old', filename: 'old.pptx' };
+        const old = { ...file, file_id: 'old', filename: 'old.csv', type: 'text/csv', bytes: 100 };
         const sibling = { ...file, file_id: 'sibling', filename: 'sibling.pptx' };
         const models = require('~/models');
         models.getMessages.mockResolvedValue([
@@ -7524,14 +7566,29 @@ describe('AgentClient - titleConvo', () => {
           ),
         );
         const state = installWorkspacePreparation(
-          [],
+          scenario === 'current-rejected' ? [{ file_id: 'rejected-current' }] : [],
           [old, file, sibling],
           scenario === 'agent-disabled' ? [] : ['primary-agent'],
           true,
         );
         if (scenario === 'endpoint-disabled') {
           mockReq.config.fileConfig = {
-            endpoints: { [initialized.endpoint]: { supportedMimeTypes: ['image/png'] } },
+            endpoints: { [initialized.endpoint]: { supportedMimeTypes: ['text/csv'] } },
+          };
+        }
+        if (scenario === 'endpoint-off') {
+          mockReq.config.fileConfig = {
+            endpoints: { [initialized.endpoint]: { disabled: true } },
+          };
+        }
+        if (scenario === 'aggregate-rejected' || scenario === 'size-rejected') {
+          mockReq.config.fileConfig = {
+            endpoints: {
+              [initialized.endpoint]: {
+                fileSizeLimit: scenario === 'size-rejected' ? 32 : 64,
+                totalSizeLimit: scenario === 'aggregate-rejected' ? 32 : 64,
+              },
+            },
           };
         }
         const history = await client.loadHistory('convo-123', 'now');
@@ -7544,7 +7601,7 @@ describe('AgentClient - titleConvo', () => {
           expect(state.calls).toEqual([]);
           expect(instructions).not.toContain('workspace_path');
         }
-        expect(instructions).not.toContain('old.pptx');
+        expect(instructions).not.toContain('old.csv');
         expect(instructions).not.toContain('sibling.pptx');
       },
     );

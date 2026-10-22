@@ -114,18 +114,14 @@ export function createWorkspacePreparation({
     const tenantId = req.user.tenantId;
     // Raw current presence is authoritative even when every reference was rejected.
     const priorFiles = agent.resendFiles === false ? [] : historicalFiles;
+    // Spend the endpoint budget only on the selected group, in message reference order.
     const files =
       requestFiles.length > 0
         ? trustedWorkspaceFiles(agent.currentRequestAttachments ?? [], userId, tenantId)
-        : selectWorkspaceInputFiles(
-            messages,
-            filterFilesByEndpointRuntimeConfig(req.config, {
-              files: [...priorFiles],
-              endpoint: agent.endpoint,
-            }),
-            userId,
-            tenantId,
-          );
+        : filterFilesByEndpointRuntimeConfig(req.config, {
+            files: selectWorkspaceInputFiles(messages, priorFiles, userId, tenantId),
+            endpoint: agent.endpoint,
+          });
     if (files.length === 0) return;
     const callerSignal =
       requestSignal && signal

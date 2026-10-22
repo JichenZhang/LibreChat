@@ -180,11 +180,11 @@ export function isWorkspaceCopyPath(filename: string, path: string): boolean {
   return false;
 }
 
-export function trustedWorkspaceFiles(
-  files: readonly ScopedFile[],
+export function trustedWorkspaceFiles<T extends ScopedFile>(
+  files: readonly T[],
   userId: string,
   tenantId?: string,
-): ScopedFile[] {
+): T[] {
   const seen = new Set<string>();
   return files.filter((file) => {
     if (
@@ -205,15 +205,15 @@ export function trustedWorkspaceFiles(
 }
 
 /** Select only the most recent attachment-bearing user turn on this branch. */
-export function selectWorkspaceInputFiles(
+export function selectWorkspaceInputFiles<T extends ScopedFile>(
   messages: readonly {
     isCreatedByUser?: boolean;
     files?: Array<{ file_id?: string } | null> | null;
   }[],
-  authorizedFiles: readonly ScopedFile[],
+  authorizedFiles: readonly T[],
   userId: string,
   tenantId?: string,
-): ScopedFile[] {
+): T[] {
   const byId = new Map(authorizedFiles.map((file) => [file.file_id, file]));
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index];
@@ -226,7 +226,7 @@ export function selectWorkspaceInputFiles(
     const group = trustedWorkspaceFiles(
       message.files
         .map((reference) => byId.get(reference?.file_id ?? ''))
-        .filter((file): file is ScopedFile => file != null),
+        .filter((file): file is T => file != null),
       userId,
       tenantId,
     );

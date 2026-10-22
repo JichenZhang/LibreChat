@@ -12,6 +12,36 @@ import {
 } from './workspaceAttachment';
 
 describe('Workspace attachment stream bound', () => {
+  it('allows exactly 64 MiB while rejecting a false short size after bounded transfer', async () => {
+    const oneMiB = Buffer.alloc(1 << 20, 0x42);
+    const source = () => Readable.from(Array.from({ length: 64 }, () => oneMiB));
+    let delivered = 0;
+    await streamWorkspaceAttachment(
+      source(),
+      new Writable({
+        write(chunk: Buffer, _encoding, done) {
+          delivered += chunk.length;
+          done();
+        },
+      }),
+      64 << 20,
+      64 << 20,
+    );
+    expect(delivered).toBe(64 << 20);
+    await expect(
+      streamWorkspaceAttachment(
+        source(),
+        new Writable({
+          write(_chunk, _encoding, done) {
+            done();
+          },
+        }),
+        64 << 20,
+        1,
+      ),
+    ).rejects.toThrow('WORKSPACE_FILE_SIZE_MISMATCH');
+  });
+
   it('copies incident-sized bytes and rejects an unknown-length stream beyond 64 MiB', async () => {
     const incidentBytes = Buffer.alloc(13_393_065, 0x5a);
     const chunks: Buffer[] = [];

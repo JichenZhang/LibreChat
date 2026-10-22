@@ -67,6 +67,12 @@ export function workspaceCopyGateResult(
     prepared_paths: result.prepared_paths,
     ...(result.error ? { error: { code: result.error } } : {}),
     ...(result.related_path ? { related_path: result.related_path } : {}),
+    ...(result.error
+      ? {
+          guidance:
+            'Chat upload storage and Workspace work-copy preparation are separate. This preparation did not run the command or delete the native upload. Do not upload the same unchanged file again. If preparation cannot be confirmed, use Explorer or Finder to place the file in your own NAS Personal directory and give the Agent its exact path. Inspect any related_path first and preserve existing edits; do not overwrite it or automatically import another copy.',
+        }
+      : {}),
     ...(result.error === 'workspace_import_too_large'
       ? {
           guidance:
@@ -278,6 +284,9 @@ export async function prepareWorkspaceCopies(
           if (!(await deps.exists(copy.path, signal)))
             return safeFailure('workspace_copy_moved_or_deleted', paths, copy.path);
           paths.push(virtualPrefix + copy.path);
+          // Another request prepared this copy after our initial lookup. The
+          // current command has not seen that request's collision-resolved path.
+          created = true;
           continue;
         }
         return safeFailure('workspace_copy_preparation_uncertain', paths, copy?.path);

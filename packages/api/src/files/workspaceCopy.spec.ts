@@ -158,6 +158,43 @@ describe('Workspace copy preparation', () => {
     expect(state.calls).toEqual([]);
   });
 
+  it('preserves a published copy after a lost response and blocks duplicate recovery imports', async () => {
+    const state = fixture();
+    state.deps.importAttachment = async (_fileId, path) => {
+      state.calls.push(path);
+      state.nas.set(path, 'published then edited');
+      throw new Error('lost transfer response');
+    };
+    const input = [file('uncertain')];
+    const first = await prepareWorkspaceCopies(input, 'owner', 'tenant', state.deps);
+    const retry = await prepareWorkspaceCopies(input, 'owner', 'tenant', state.deps);
+    expect(first).toMatchObject({ execute: false, error: 'workspace_copy_preparation_uncertain' });
+    expect(retry).toMatchObject({ execute: false, error: 'workspace_copy_preparation_uncertain' });
+    expect(state.calls).toEqual(['聊天上传/演示.pptx']);
+    expect(state.nas.get('聊天上传/演示.pptx')).toBe('published then edited');
+    expect(
+      JSON.parse(workspaceCopyGateResult(retry as Exclude<typeof retry, { execute: true }>)[0]),
+    ).toMatchObject({
+      command_not_run: true,
+      related_path: '/workspace/Personal/聊天上传/演示.pptx',
+      guidance: expect.stringContaining('NAS Personal'),
+    });
+  });
+
+  it('allows only one transfer during concurrent preparations of the same attachment', async () => {
+    const state = fixture();
+    const results = await Promise.all([
+      prepareWorkspaceCopies([file('same')], 'owner', 'tenant', state.deps),
+      prepareWorkspaceCopies([file('same')], 'owner', 'tenant', state.deps),
+    ]);
+    expect(state.calls).toEqual(['聊天上传/演示.pptx']);
+    expect(results.every((result) => !result.execute)).toBe(true);
+    expect(state.copies.get('same')?.status).toBe('ready');
+    expect(await prepareWorkspaceCopies([file('same')], 'owner', 'tenant', state.deps)).toEqual({
+      execute: true,
+    });
+  });
+
   it('keeps filenames as one safe component', () => {
     expect(workspaceCopyPath('../private.pptx')).toBeNull();
     expect(workspaceCopyPath('deck.pptx', 3)).toBe('聊天上传/deck (3).pptx');

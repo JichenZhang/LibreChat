@@ -1381,7 +1381,10 @@ function createToolInstance({
             }),
           signal: derivedSignal,
         });
-        if (!preparation.execute) return workspaceCopyGateResult(preparation);
+        if (!preparation.execute) {
+          const result = workspaceCopyGateResult(preparation);
+          return isAssistantsEndpoint(provider) ? result[0] : result;
+        }
       }
       if (
         normalizeServerName(serverName) === 'workspace-mcp' &&

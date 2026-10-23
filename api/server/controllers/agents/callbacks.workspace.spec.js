@@ -11,6 +11,9 @@ const {
   MCPServersRegistry,
   publishWorkspaceAttachment,
   createOwnedToolEndHandler,
+  createToolExecuteHandler,
+  enrichWithSkillConfigurable,
+  createSafeUser,
   GenerationJobManager,
   createStreamServices,
   enqueueWorkspaceExport,
@@ -138,8 +141,8 @@ describe('Workspace export through native MCP and attachment completion', () => 
     };
   });
 
-  async function invoke(config = serverConfig, extra = {}) {
-    const nativeTool = await createMCPTool({
+  async function createNativeTool(config = serverConfig) {
+    return createMCPTool({
       user,
       res: {},
       toolKey: name,
@@ -156,6 +159,10 @@ describe('Workspace export through native MCP and attachment completion', () => 
         },
       },
     });
+  }
+
+  async function invoke(config = serverConfig, extra = {}) {
+    const nativeTool = await createNativeTool(config);
     return nativeTool.invoke(
       { type: 'tool_call', id: 'selected-call', name, args: {} },
       {
@@ -165,6 +172,55 @@ describe('Workspace export through native MCP and attachment completion', () => 
         ...extra,
       },
     );
+  }
+
+  async function executeProjected(effectiveUser = createSafeUser(user)) {
+    const nativeTool = await createNativeTool();
+    const artifactPromises = [];
+    const write = jest.fn();
+    const req = { user, config: {} };
+    const callback = jest.fn(
+      createToolEndCallback({ req, res: { headersSent: true, write }, artifactPromises }),
+    );
+    const controller = new AbortController();
+    const handler = createToolExecuteHandler({
+      runSignal: controller.signal,
+      foregroundRunId: context.run_id,
+      loadTools: async () =>
+        enrichWithSkillConfigurable({
+          result: { loadedTools: [nativeTool] },
+          context: { req, codeEnvAvailable: false },
+        }),
+      toolEndCallback: callback,
+    });
+    const results = await tenantStorage.run(
+      { tenantId: user.tenantId },
+      () =>
+        new Promise((resolve, reject) => {
+          handler
+            .handle('on_tool_execute', {
+              toolCalls: [{ id: 'selected-call', name, args: {}, stepId: 'native-step' }],
+              configurable: {
+                user: effectiveUser,
+                user_id: effectiveUser.id,
+                thread_id: context.thread_id,
+              },
+              metadata: context,
+              agentId: 'synthetic-agent',
+              signal: controller.signal,
+              resolve,
+              reject,
+            })
+            .catch(reject);
+        }),
+    );
+    expect(results[0].status).toBe('success');
+    return {
+      output: callback.mock.calls[0][0].output,
+      artifactPromises,
+      attachments: (await Promise.all(artifactPromises)).filter(Boolean),
+      write,
+    };
   }
 
   async function complete(output, metadata = context, effectiveUser = user, res = {}) {
@@ -188,8 +244,11 @@ describe('Workspace export through native MCP and attachment completion', () => 
     };
   }
 
-  it('emits once, persists without prose links, reloads, and reuses registered bytes', async () => {
-    const output = await invoke();
+  it('projects the safe user, emits once, persists without prose links, and reloads registered bytes', async () => {
+    const safeUser = createSafeUser(user);
+    expect(safeUser.id).toBe(user.id);
+    expect(safeUser.tenantId).toBeUndefined();
+    const { output, artifactPromises, attachments, write } = await executeProjected(safeUser);
     expect(output.artifact?.workspaceExport).toBeInstanceOf(
       require('@librechat/api').WorkspaceExport,
     );
@@ -200,7 +259,7 @@ describe('Workspace export through native MCP and attachment completion', () => 
       toolCallId: 'selected-call',
       toolName: name,
     });
-    const { artifactPromises, attachments, write } = await complete(output);
+    expect(output.artifact.workspaceExport.tenantId).toBe(user.tenantId);
     expect(attachments).toHaveLength(1);
     expect(write).toHaveBeenCalledTimes(1);
     const attachment = attachments[0];
@@ -252,6 +311,36 @@ describe('Workspace export through native MCP and attachment completion', () => 
     expect(resumed.find((message) => message.messageId === saved.messageId).attachments).toEqual(
       attachments,
     );
+  });
+
+  it.each(['other-tenant', null, 'other-owner'])(
+    'does not borrow the captured owner for conflicting effective identity %s',
+    async (conflict) => {
+      const effectiveUser = { ...createSafeUser(user), tenantId: conflict };
+      if (conflict === 'other-owner') {
+        effectiveUser.id = new mongoose.Types.ObjectId().toString();
+        delete effectiveUser.tenantId;
+      }
+      const { output, attachments, artifactPromises, write } =
+        await executeProjected(effectiveUser);
+      expect(output.artifact?.workspaceExport).toBeUndefined();
+      expect(attachments).toEqual([]);
+      expect(artifactPromises).toHaveLength(0);
+      expect(write).not.toHaveBeenCalled();
+    },
+  );
+
+  it('delivers an unscoped owned export through the safe-user host path', async () => {
+    delete user.tenantId;
+    await models.File.collection.updateOne({ file_id: file.file_id }, { $unset: { tenantId: '' } });
+    const conflict = await executeProjected({ ...createSafeUser(user), tenantId: 'other-tenant' });
+    expect(conflict.artifactPromises).toHaveLength(0);
+    expect(conflict.write).not.toHaveBeenCalled();
+    const { output, attachments, write } = await executeProjected();
+    expect(output.artifact.workspaceExport.tenantId).toBeNull();
+    expect(attachments).toHaveLength(1);
+    expect(attachments[0]).toMatchObject({ file_id: file.file_id, user: user.id });
+    expect(write).toHaveBeenCalledTimes(1);
   });
 
   it.each(['user', 'plugin', undefined])('rejects non-operator source %s', async (source) => {

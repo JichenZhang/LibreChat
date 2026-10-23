@@ -4,6 +4,8 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { TFile } from 'librechat-data-provider';
 
 export type WorkspaceExportContext = {
+  /** Authenticated tool-creation owner; the safe runnable user can omit tenantId. */
+  owner?: Owner;
   messageId?: string;
   conversationId?: string;
   toolCallId?: string;
@@ -12,7 +14,7 @@ export type WorkspaceExportContext = {
 };
 
 type Owner = { id?: string; tenantId?: string | null };
-type Identity = Required<Omit<WorkspaceExportContext, 'signal'>>;
+type Identity = Required<Omit<WorkspaceExportContext, 'signal' | 'owner'>>;
 type StoredFile = Pick<
   TFile,
   | 'file_id'
@@ -96,6 +98,7 @@ export function formatWorkspaceExport<Artifact extends object>({
   user?: Owner;
   context?: WorkspaceExportContext;
 }): [string, Artifact | { workspaceExport: WorkspaceExport } | undefined] {
+  const owner = context?.owner;
   // This is the existing Garden service identity, not a generic MCP file protocol.
   if (
     serverName !== 'workspace-mcp' ||
@@ -108,7 +111,9 @@ export function formatWorkspaceExport<Artifact extends object>({
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
       result.structuredContent.file_id,
     ) ||
-    !user?.id ||
+    !owner?.id ||
+    user?.id !== owner.id ||
+    (user.tenantId !== undefined && (user.tenantId ?? null) !== (owner.tenantId ?? null)) ||
     !context?.messageId ||
     !context.conversationId ||
     !context.toolCallId ||
@@ -124,8 +129,8 @@ export function formatWorkspaceExport<Artifact extends object>({
       ...formatted[1],
       workspaceExport: new WorkspaceExport(
         result.structuredContent.file_id,
-        user.id,
-        user.tenantId ?? null,
+        owner.id,
+        owner.tenantId ?? null,
         { messageId, conversationId, toolCallId, toolName: name },
         context.signal,
       ),

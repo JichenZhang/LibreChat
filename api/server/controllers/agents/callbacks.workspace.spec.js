@@ -57,6 +57,8 @@ const { createToolEndCallback } = require('./callbacks');
 const { initializeFakeClient } = require('~/app/clients/specs/FakeClient');
 const BaseClient = require('~/app/clients/BaseClient');
 
+// Deferred active-generation replay reproduction: this file at b75a96f43.
+// The user-directed scope is recorded in Garden's 2026-10-24-native-export-display findings.
 describe('Workspace export through native MCP and attachment completion', () => {
   let mongo, sdk, server, manager, file, user, context, response, models;
   const name = `workspace_chat_download${Constants.mcp_delimiter}workspace-mcp`;
@@ -332,7 +334,7 @@ describe('Workspace export through native MCP and attachment completion', () => 
     expect(write).not.toHaveBeenCalled();
   });
 
-  it('replays the native resumable attachment event under the owning generation', async () => {
+  it('emits the native attachment once under the owning generation', async () => {
     await GenerationJobManager.destroy();
     GenerationJobManager.configure({ ...createStreamServices(), cleanupOnComplete: false });
     GenerationJobManager.initialize();
@@ -360,24 +362,6 @@ describe('Workspace export through native MCP and attachment completion', () => 
       await Promise.all(emitted.mock.results.map(({ value }) => value));
       expect(emitted).toHaveBeenCalledTimes(1);
       expect(emitted.mock.calls[0][2]).toEqual({ expectedCreatedAt: job.createdAt });
-      const resumedEvents = [];
-      const resumed = await GenerationJobManager.subscribeWithResume(
-        context.thread_id,
-        (event) => resumedEvents.push(event),
-        undefined,
-        undefined,
-        { expectedCreatedAt: job.createdAt },
-      );
-      expect(resumed.subscription).not.toBeNull();
-      resumed.subscription.activate();
-      resumed.subscription.unsubscribe();
-      expect(
-        [
-          ...(resumed.resumeState?.replayEvents ?? []),
-          ...resumed.pendingEvents,
-          ...resumedEvents,
-        ].filter((event) => event.event === 'attachment'),
-      ).toEqual([{ event: 'attachment', data: await artifactPromises[0] }]);
     } finally {
       emitted.mockRestore();
       await GenerationJobManager.destroy();

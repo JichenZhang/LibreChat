@@ -10,6 +10,7 @@ import type {
   UpstreamTokenProvider,
   UpstreamTokenProviderResolver,
 } from '~/mcp/oauth/obo';
+import type { WorkspaceExportContext } from '~/files/workspaceExport';
 import type { AuthIdentityContext } from '~/utils/identity';
 import type { GraphTokenResolver } from '~/utils/graph';
 import type { FlowStateManager } from '~/flow/manager';
@@ -37,6 +38,7 @@ import { OboTokenResolutionError, resolveOboToken } from '~/mcp/oauth';
 import { MCPServerCatalogRecoveryTracker } from './catalog/recovery';
 import { MCPServerInspector } from './registry/MCPServerInspector';
 import { MCPServersRegistry } from './registry/MCPServersRegistry';
+import { formatWorkspaceExport } from '~/files/workspaceExport';
 import { UserConnectionManager } from './UserConnectionManager';
 import { ConnectionsRepository } from './ConnectionsRepository';
 import { MCPConnectionFactory } from './MCPConnectionFactory';
@@ -1122,6 +1124,7 @@ Please follow these instructions when using tools from the respective MCP server
     oboIdentityContext,
     onOAuthCredentialsChanged,
     onOAuthCredentialsChanging,
+    workspaceExportContext,
   }: {
     user?: IUser;
     serverName: string;
@@ -1146,6 +1149,7 @@ Please follow these instructions when using tools from the respective MCP server
     oboIdentityContext?: AuthIdentityContext;
     onOAuthCredentialsChanged?: t.UserConnectionContext['onOAuthCredentialsChanged'];
     onOAuthCredentialsChanging?: t.UserConnectionContext['onOAuthCredentialsChanging'];
+    workspaceExportContext?: WorkspaceExportContext;
   }): Promise<t.FormattedToolResponse> {
     const userId = user?.id;
     const logPrefix = userId ? `[MCP][User: ${userId}][${serverName}]` : `[MCP][${serverName}]`;
@@ -1652,7 +1656,15 @@ Please follow these instructions when using tools from the respective MCP server
           await this.updateUserLastActivity(userId);
         }
         this.checkIdleConnections();
-        return formatToolContent(result as t.MCPToolCallResponse, provider);
+        return formatWorkspaceExport({
+          result,
+          formatted: formatToolContent(result as t.MCPToolCallResponse, provider),
+          serverName,
+          serverConfig: declaredConfig,
+          toolName,
+          user,
+          context: workspaceExportContext,
+        });
       } catch (error) {
         if (error instanceof OAuthRecoveryTakeoverRequired) {
           recoveryTakeoverConsumed = true;

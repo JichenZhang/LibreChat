@@ -1,3 +1,4 @@
+jest.mock('~/models', () => ({ findFileById: jest.fn() }));
 jest.mock('~/server/services/Files/Code/process', () => ({
   processCodeOutput: jest.fn(),
   runPreviewFinalize: jest.fn(),

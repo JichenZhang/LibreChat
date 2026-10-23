@@ -26,6 +26,7 @@ import type {
   UpstreamTokenProvider,
   UpstreamTokenProviderResolver,
 } from '~/mcp/oauth/obo';
+import type { WorkspaceExport } from '~/files/workspaceExport';
 import type { AuthIdentityContext } from '~/utils/identity';
 import type { GraphTokenResolver } from '~/utils/graph';
 import type { FlowStateManager } from '~/flow/manager';
@@ -151,6 +152,7 @@ export type FileSearchSource = {
 
 export type Artifacts =
   | {
+      workspaceExport?: WorkspaceExport;
       content?: FormattedContent[];
       [Tools.ui_resources]?: {
         data: UIResource[];

@@ -35,7 +35,9 @@ const {
   captureSubagentIdentity,
   collectToolCallIds,
   createToolTimingAdapter,
+  enqueueWorkspaceExport,
 } = require('@librechat/api');
+const { findFileById } = require('~/models');
 const { processFileCitations } = require('~/server/services/Files/Citations');
 const { processCodeOutput, runPreviewFinalize } = require('~/server/services/Files/Code/process');
 const { preflightCodeOutputBatch } = require('~/server/services/Files/Code/preflight');
@@ -978,6 +980,14 @@ function createToolEndCallback({ req, res, artifactPromises, streamId = null, jo
    * @type {ToolEndCallback}
    */
   return async (data, metadata) => {
+    enqueueWorkspaceExport({
+      data,
+      metadata,
+      user: req.user,
+      artifactPromises,
+      findFileById,
+      emit: (attachment) => writeAttachmentUpdate(res, streamId, attachment, jobCreatedAt),
+    });
     const output = data?.output;
     if (!output) {
       return;

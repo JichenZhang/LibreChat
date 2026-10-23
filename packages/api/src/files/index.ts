@@ -28,5 +28,6 @@ export * from './usage';
 export * from './validation';
 export * from './text';
 export * from './workspaceAttachment';
+export * from './workspaceExport';
 export * from './workspaceCopy';
 export * from './workspacePreparation';

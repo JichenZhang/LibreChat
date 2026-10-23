@@ -1,4 +1,5 @@
 const { Tools, StepEvents } = require('librechat-data-provider');
+jest.mock('~/models', () => ({ findFileById: jest.fn() }));
 
 // Mock all dependencies before requiring the module
 jest.mock('nanoid', () => ({
@@ -27,6 +28,7 @@ jest.mock('@librechat/api', () => ({
   collectToolCallIds: jest.requireActual('@librechat/api').collectToolCallIds,
   captureSubagentIdentity: jest.requireActual('@librechat/api').captureSubagentIdentity,
   createToolTimingAdapter: jest.requireActual('@librechat/api').createToolTimingAdapter,
+  enqueueWorkspaceExport: jest.requireActual('@librechat/api').enqueueWorkspaceExport,
 }));
 
 jest.mock('@librechat/data-schemas', () => ({

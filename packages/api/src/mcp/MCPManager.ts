@@ -1663,6 +1663,7 @@ Please follow these instructions when using tools from the respective MCP server
           serverConfig: declaredConfig,
           toolName,
           user,
+          authIdentity: oboIdentityContext,
           context: workspaceExportContext,
         });
       } catch (error) {

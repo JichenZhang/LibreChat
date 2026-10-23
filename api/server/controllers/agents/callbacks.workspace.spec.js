@@ -53,9 +53,14 @@ jest.mock('~/server/services/Files/Code/preflight', () => ({
 }));
 jest.mock('~/server/services/Files/process', () => ({ saveBase64Image: jest.fn() }));
 jest.mock('~/server/services/Files/strategies', () => ({ getStrategyFunctions: jest.fn() }));
+jest.mock('~/app/clients/tools', () => ({ availableTools: [], manifestToolMap: {} }));
+jest.mock('~/app/clients/tools/util/fileSearch', () => ({}));
+jest.mock('~/server/services/PluginService', () => ({}));
+jest.mock('~/server/services/Tools/credentials', () => ({}));
 
 const db = require('~/models');
-const { createMCPTool } = require('~/server/services/MCP');
+const nativeFactory = jest.spyOn(require('~/server/services/MCP'), 'createMCPTool');
+const { loadTools } = require('~/app/clients/tools/util/handleTools');
 const { createToolEndCallback } = require('./callbacks');
 const { initializeFakeClient } = require('~/app/clients/specs/FakeClient');
 const BaseClient = require('~/app/clients/BaseClient');
@@ -141,24 +146,43 @@ describe('Workspace export through native MCP and attachment completion', () => 
     };
   });
 
-  async function createNativeTool(config = serverConfig) {
-    return createMCPTool({
-      user,
-      res: {},
-      toolKey: name,
-      provider: 'openai',
-      config,
-      mcpPermissionContext: { canUseServers: async () => true },
-      availableTools: {
-        [name]: {
-          serverToolName: 'workspace_chat_download',
-          function: {
-            description: 'Export selected file',
-            parameters: { type: 'object', properties: {} },
+  async function createNativeTool(config = serverConfig, requestUser = user) {
+    require('~/config').getMCPServersRegistry.mockReturnValue({
+      getServerConfig: async () => config,
+    });
+    const loaded = await tenantStorage.run({ tenantId: requestUser.tenantId }, () =>
+      loadTools({
+        user: user.id,
+        tools: [name],
+        agent: { id: 'synthetic-agent', provider: 'openai' },
+        options: {
+          req: { user: requestUser, body: {}, config: {} },
+          res: {},
+          mcpPermissionContext: { canUseServers: async () => true },
+          mcpServerContext: {
+            configServers: { 'workspace-mcp': config },
+            serverNames: ['workspace-mcp'],
+            rawServerNames: ['workspace-mcp'],
+            accessibleServerNames: ['workspace-mcp'],
+          },
+          requestScopedConnections: new Map(),
+          upstreamTokenProvider: async () => undefined,
+          mcpAvailableTools: {
+            'workspace-mcp': {
+              [name]: {
+                serverToolName: 'workspace_chat_download',
+                function: {
+                  description: 'Export selected file',
+                  parameters: { type: 'object', properties: {} },
+                },
+              },
+            },
           },
         },
-      },
-    });
+      }),
+    );
+    expect(loaded.loadedTools).toHaveLength(1);
+    return loaded.loadedTools[0];
   }
 
   async function invoke(config = serverConfig, extra = {}) {
@@ -174,8 +198,8 @@ describe('Workspace export through native MCP and attachment completion', () => 
     );
   }
 
-  async function executeProjected(effectiveUser = createSafeUser(user)) {
-    const nativeTool = await createNativeTool();
+  async function executeProjected(effectiveUser = createSafeUser(user), requestUser = user) {
+    const nativeTool = await createNativeTool(serverConfig, requestUser);
     const artifactPromises = [];
     const write = jest.fn();
     const req = { user, config: {} };
@@ -244,11 +268,18 @@ describe('Workspace export through native MCP and attachment completion', () => 
     };
   }
 
-  it('projects the safe user, emits once, persists without prose links, and reloads registered bytes', async () => {
+  it('loads from the authenticated request, projects the user, emits once, and reloads registered bytes without links', async () => {
     const safeUser = createSafeUser(user);
     expect(safeUser.id).toBe(user.id);
     expect(safeUser.tenantId).toBeUndefined();
     const { output, artifactPromises, attachments, write } = await executeProjected(safeUser);
+    expect(nativeFactory).toHaveBeenCalledTimes(1);
+    const creation = nativeFactory.mock.calls[0][0];
+    expect(creation.user.tenantId).toBeUndefined();
+    expect(creation.oboIdentityContext).toMatchObject({
+      appUserId: user.id,
+      tenantId: user.tenantId,
+    });
     expect(output.artifact?.workspaceExport).toBeInstanceOf(
       require('@librechat/api').WorkspaceExport,
     );
@@ -312,6 +343,23 @@ describe('Workspace export through native MCP and attachment completion', () => 
       attachments,
     );
   });
+
+  it.each(['missing-user', 'other-user', 'other-tenant'])(
+    'does not deliver when the loader authentication context has %s',
+    async (conflict) => {
+      const requestUser = { ...user };
+      if (conflict === 'missing-user') delete requestUser.id;
+      if (conflict === 'other-user') requestUser.id = new mongoose.Types.ObjectId().toString();
+      if (conflict === 'other-tenant') requestUser.tenantId = 'other-tenant';
+      const { attachments, artifactPromises, write } = await executeProjected(
+        createSafeUser(user),
+        requestUser,
+      );
+      expect(attachments).toEqual([]);
+      expect(artifactPromises).toHaveLength(0);
+      expect(write).not.toHaveBeenCalled();
+    },
+  );
 
   it.each(['other-tenant', null, 'other-owner'])(
     'does not borrow the captured owner for conflicting effective identity %s',

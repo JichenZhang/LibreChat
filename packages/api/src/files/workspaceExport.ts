@@ -2,10 +2,9 @@ import { logger } from '@librechat/data-schemas';
 import { FileContext, FileSources } from 'librechat-data-provider';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { TFile } from 'librechat-data-provider';
+import type { AuthIdentityContext } from '~/utils/identity';
 
 export type WorkspaceExportContext = {
-  /** Authenticated tool-creation owner; the safe runnable user can omit tenantId. */
-  owner?: Owner;
   messageId?: string;
   conversationId?: string;
   toolCallId?: string;
@@ -14,7 +13,7 @@ export type WorkspaceExportContext = {
 };
 
 type Owner = { id?: string; tenantId?: string | null };
-type Identity = Required<Omit<WorkspaceExportContext, 'signal' | 'owner'>>;
+type Identity = Required<Omit<WorkspaceExportContext, 'signal'>>;
 type StoredFile = Pick<
   TFile,
   | 'file_id'
@@ -88,6 +87,7 @@ export function formatWorkspaceExport<Artifact extends object>({
   serverConfig,
   toolName,
   user,
+  authIdentity,
   context,
 }: {
   result: CallToolResult;
@@ -96,9 +96,9 @@ export function formatWorkspaceExport<Artifact extends object>({
   serverConfig: { source?: string; url?: string };
   toolName: string;
   user?: Owner;
+  authIdentity?: AuthIdentityContext;
   context?: WorkspaceExportContext;
 }): [string, Artifact | { workspaceExport: WorkspaceExport } | undefined] {
-  const owner = context?.owner;
   // This is the existing Garden service identity, not a generic MCP file protocol.
   if (
     serverName !== 'workspace-mcp' ||
@@ -111,9 +111,9 @@ export function formatWorkspaceExport<Artifact extends object>({
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
       result.structuredContent.file_id,
     ) ||
-    !owner?.id ||
-    user?.id !== owner.id ||
-    (user.tenantId !== undefined && (user.tenantId ?? null) !== (owner.tenantId ?? null)) ||
+    !authIdentity?.appUserId ||
+    user?.id !== authIdentity.appUserId ||
+    (user.tenantId !== undefined && (user.tenantId ?? null) !== (authIdentity.tenantId ?? null)) ||
     !context?.messageId ||
     !context.conversationId ||
     !context.toolCallId ||
@@ -129,8 +129,8 @@ export function formatWorkspaceExport<Artifact extends object>({
       ...formatted[1],
       workspaceExport: new WorkspaceExport(
         result.structuredContent.file_id,
-        owner.id,
-        owner.tenantId ?? null,
+        authIdentity.appUserId,
+        authIdentity.tenantId ?? null,
         { messageId, conversationId, toolCallId, toolName: name },
         context.signal,
       ),

@@ -1341,7 +1341,6 @@ function createToolInstance({
 
       const result = await mcpManager.callTool({
         workspaceExportContext: {
-          owner: capturedUser,
           messageId: config?.metadata?.run_id,
           conversationId: config?.metadata?.thread_id,
           toolCallId: config?.toolCall?.id,

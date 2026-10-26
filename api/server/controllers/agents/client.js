@@ -4864,6 +4864,15 @@ class AgentClient extends BaseClient {
         const { calibrationRatio, fadingTier, fadingTiers } = resolveRunSeeds(this);
 
         const streamId = this.options.req?._resumableStreamId;
+        const gardenHelp = await createGardenHelpRuntime(
+          this.options.req,
+          db,
+          this.parentMessageId,
+          {
+            getStrategyFunctions,
+            workspaceSecret: process.env.GARDEN_WORKSPACE_MCP_SERVICE_SECRET,
+          },
+        );
         // HITL: establish an empty checkpoint barrier for THIS immutable generation
         // before exposing its graph. A retried/recovered initialization may have left
         // partial state in the same saver scope; a predecessor uses a different scope,
@@ -4930,10 +4939,7 @@ class AgentClient extends BaseClient {
           activityPhase?.handlers(offsetHandlers) ??
           (activityLabel ? createAssistantPhaseStampingHandlers(offsetHandlers) : offsetHandlers);
         const createRunPromise = createRun({
-          gardenHelp: await createGardenHelpRuntime(this.options.req, db, this.parentMessageId, {
-            getStrategyFunctions,
-            workspaceSecret: process.env.GARDEN_WORKSPACE_MCP_SERVICE_SECRET,
-          }),
+          gardenHelp,
           agents,
           // Conversation-stable identity for the e2e run hook; a resumed run
           // carries no messages, so history cannot identify the conversation.

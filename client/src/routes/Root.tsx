@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, startTransition } from 'react';
 import { useRecoilValue } from 'recoil';
-import { useLocation } from 'react-router-dom';
 import HelpBoundary from '~/components/Chat/help/Boundary';
+import useHelpMode from '~/components/Chat/help/useHelpMode';
 import { useMediaQuery } from '@librechat/client';
 import {
   UnifiedSidebar,
@@ -56,8 +56,8 @@ function KeyboardShortcutsProvider() {
 }
 
 export default function Root() {
-  const { search } = useLocation();
-  const helpMode = new URLSearchParams(search).has('gardenHelp');
+  const { isHelp, requested } = useHelpMode();
+  const helpMode = isHelp || requested;
   const [showTerms, setShowTerms] = useState(false);
   const [bannerHeight, setBannerHeight] = useState(0);
   /** Shared with the drawer so the two agree on the breakpoint-transition frame. */

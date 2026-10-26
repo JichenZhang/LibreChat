@@ -166,7 +166,12 @@ export default function HelpMount({
     window.addEventListener('message', receive);
     return () => window.removeEventListener('message', receive);
   }, []);
-  if (!config?.gardenHelp || new URLSearchParams(location.search).has('gardenHelp')) return null;
+  if (
+    !config?.gardenHelp ||
+    new URLSearchParams(location.search).has('gardenHelp') ||
+    conversationId === session.data?.conversationId
+  )
+    return null;
   const mobile = view.width < 640;
   const docked = mobile && layout.dock != null;
   const onPointerDown = (event: React.PointerEvent<HTMLElement>) => {

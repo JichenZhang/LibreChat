@@ -1,22 +1,13 @@
-import { Navigate, Outlet, useLocation } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { Navigate, Outlet } from 'react-router-dom';
 import { Button } from '@librechat/client';
-import { QueryKeys, request } from 'librechat-data-provider';
-import { useAuthContext, useLocalize } from '~/hooks';
+import { useLocalize } from '~/hooks';
+import useHelpMode from './useHelpMode';
 
 /** A display flag cannot relabel a work chat as the read-only Help conversation. */
 export default function HelpBoundary() {
-  const { pathname, search } = useLocation();
-  const requested = new URLSearchParams(search).has('gardenHelp');
-  const { user } = useAuthContext();
+  const { requested, session, path, isHelp } = useHelpMode();
   const localize = useLocalize();
-  const session = useQuery<{ conversationId: string }>({
-    queryKey: [QueryKeys.gardenHelpSession, user?.id],
-    queryFn: () => request.get('/api/garden/help/session'),
-    enabled: requested && !!user?.id,
-    retry: false,
-  });
-  if (!requested) return <Outlet />;
+  if (!requested && !isHelp) return <Outlet />;
   if (!session.data)
     return (
       <div role="status" className="p-4">
@@ -26,7 +17,6 @@ export default function HelpBoundary() {
         )}
       </div>
     );
-  const path = `/c/${encodeURIComponent(session.data.conversationId)}`;
-  if (pathname !== path) return <Navigate to={`${path}?gardenHelp=1`} replace />;
+  if (!isHelp) return <Navigate to={`${path}?gardenHelp=1`} replace />;
   return <Outlet />;
 }

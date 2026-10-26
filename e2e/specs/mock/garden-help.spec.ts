@@ -117,7 +117,9 @@ test('work chat and one native Help frame keep separate drafts; expand, edge Han
   });
   const bounded = await page.context().newPage();
   await bounded.goto(`${workURL}?gardenHelp=1`);
-  await expect(bounded).toHaveURL(new URL(sourceURL!, 'http://127.0.0.1:25483').href);
+  const expected = new URL(sourceURL!, 'http://127.0.0.1:25483');
+  await expect.poll(() => new URL(bounded.url()).pathname).toBe(expected.pathname);
+  await expect(bounded.getByRole('button', { name: 'Select a model', exact: true })).toHaveCount(0);
   await bounded.close();
 });
 

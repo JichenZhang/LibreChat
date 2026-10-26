@@ -35,6 +35,7 @@ import { cn } from '~/utils';
 import store from '~/store';
 import HelpMount from './help/Mount';
 import HelpStarters from './help/Starters';
+import useHelpMode from './help/useHelpMode';
 
 function LoadingSpinner() {
   return (
@@ -48,7 +49,7 @@ function LoadingSpinner() {
 
 function ChatView({ index = 0, project }: { index?: number; project?: TChatProject }) {
   const { conversationId } = useParams();
-  const helpMode = new URLSearchParams(location.search).has('gardenHelp');
+  const { isHelp: helpMode } = useHelpMode();
   const localize = useLocalize();
   const rootSubmission = useRecoilValue(store.submissionByIndex(index));
   const isSubmitting = useRecoilValue(store.isSubmittingFamily(index));

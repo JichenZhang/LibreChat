@@ -49,7 +49,6 @@ function LoadingSpinner() {
 
 function ChatView({ index = 0, project }: { index?: number; project?: TChatProject }) {
   const { conversationId } = useParams();
-  const { isHelp: helpMode } = useHelpMode();
   const localize = useLocalize();
   const rootSubmission = useRecoilValue(store.submissionByIndex(index));
   const isSubmitting = useRecoilValue(store.isSubmittingFamily(index));
@@ -95,6 +94,10 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
   }, [messages, fileMap]);
 
   const chatHelpers = useChatHelpers(index, conversationId);
+  const { isHelp: helpMode } = useHelpMode(
+    chatHelpers.conversation?.conversationId === conversationId &&
+      chatHelpers.conversation?.gardenHelp === true,
+  );
   useEffect(() => {
     if (!helpMode) return;
     if (!isLoading) methods.setFocus('text');
@@ -149,7 +152,7 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
     content = <MessagesView messagesTree={messagesTree} messages={messages} />;
   } else {
     content = helpMode ? (
-      <div className="p-4 text-base">Garden Help · AI</div>
+      <div className="p-4 text-base">{localize('com_ui_help_title')}</div>
     ) : (
       <Landing centerFormOnLanding={centerFormOnLanding} />
     );

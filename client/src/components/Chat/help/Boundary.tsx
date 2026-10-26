@@ -1,4 +1,5 @@
-import { Navigate, Outlet } from 'react-router-dom';
+import { useEffect } from 'react';
+import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@librechat/client';
 import { useLocalize } from '~/hooks';
 import useHelpMode from './useHelpMode';
@@ -7,6 +8,14 @@ import useHelpMode from './useHelpMode';
 export default function HelpBoundary() {
   const { requested, session, path, isHelp } = useHelpMode();
   const localize = useLocalize();
+  const { search } = useLocation();
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (!isHelp || requested) return;
+    const params = new URLSearchParams(search);
+    params.set('gardenHelp', '1');
+    navigate({ pathname: path, search: `?${params}` }, { replace: true });
+  }, [isHelp, requested, path, search, navigate]);
   if (!requested && !isHelp) return <Outlet />;
   if (!session.data)
     return (

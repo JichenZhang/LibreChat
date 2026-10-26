@@ -120,6 +120,18 @@ test('work chat and one native Help frame keep separate drafts; expand, edge Han
   const expected = new URL(sourceURL!, 'http://127.0.0.1:25483');
   await expect.poll(() => new URL(bounded.url()).pathname).toBe(expected.pathname);
   await expect(bounded.getByRole('button', { name: 'Select a model', exact: true })).toHaveCount(0);
+  // Cold direct/history navigation must recover the server-owned Help marker.
+  await bounded.goto(new URL(expected.pathname, 'http://127.0.0.1:25483').href);
+  await expect.poll(() => new URL(bounded.url()).searchParams.get('gardenHelp')).toBe('1');
+  await expect(bounded.getByRole('textbox', { name: 'Message input' })).toHaveValue(
+    'PRIVATE HELP DRAFT',
+  );
+  await expect(bounded.getByRole('button', { name: 'Select a model', exact: true })).toHaveCount(0);
+  await bounded.reload();
+  await expect(bounded.getByRole('textbox', { name: 'Message input' })).toHaveValue(
+    'PRIVATE HELP DRAFT',
+  );
+  await expect.poll(() => new URL(bounded.url()).pathname).toBe(expected.pathname);
   await bounded.close();
 });
 

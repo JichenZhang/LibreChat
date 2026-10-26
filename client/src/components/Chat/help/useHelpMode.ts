@@ -5,14 +5,14 @@ import { useAuthContext } from '~/hooks';
 
 /** View identity follows the server-owned chat, even when native navigation
  * normalizes away display parameters. Never infer authority from the flag. */
-export default function useHelpMode() {
+export default function useHelpMode(nativeHelp = false) {
   const { pathname, search } = useLocation();
   const { user } = useAuthContext();
   const requested = new URLSearchParams(search).has('gardenHelp');
   const session = useQuery<{ conversationId: string }>({
     queryKey: [QueryKeys.gardenHelpSession, user?.id],
     queryFn: () => request.get('/api/garden/help/session'),
-    enabled: requested && !!user?.id,
+    enabled: (requested || nativeHelp) && !!user?.id,
     staleTime: Infinity,
     retry: false,
   });

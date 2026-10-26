@@ -3058,6 +3058,7 @@
   "com_insights_sparkline_accessibility": "{{label}} over time",
   "com_nav_mobile_drawer_strip": "Show chat beside the sidebar on mobile",
   "com_nav_mobile_drawer_strip_info": "The sidebar stops short of the edge so a strip of the conversation stays visible. Tapping it closes the sidebar.",
+  "com_ui_help_title": "Garden Help · AI",
   "com_ui_help_submit": "Submit to Garden Help",
   "com_ui_help_material": "Submitted materials",
   "com_ui_help_shared": "Visible to all signed-in Garden users",

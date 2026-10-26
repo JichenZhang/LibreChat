@@ -1131,6 +1131,8 @@ export const tConversationSchema = z.object({
   pinned: z.boolean().optional(),
   /** Server-derived: an active shared link exists for this conversation. Not persisted. */
   isShared: z.boolean().optional(),
+  /** Server-owned Help marker; ordinary conversation writes cannot set it. */
+  gardenHelp: z.boolean().optional(),
   codeApprovalMode: z.enum(CODE_APPROVAL_MODES).optional(),
   codeEnvironmentMode: z.enum(CODE_ENVIRONMENT_MODES).optional(),
   codeWorkspaces: z

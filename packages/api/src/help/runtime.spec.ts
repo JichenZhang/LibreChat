@@ -366,6 +366,13 @@ describe('Garden Help selected attachment and readonly Workspace boundaries (R2)
     expect(whole.status).toBe(200);
     expect(whole.body.context.evidence[0].text).toBe(content);
     expect(whole.body.context.evidence[0].source.id).toBe('nas/windows');
+    expect(whole.body.context.selection).toEqual({ kind: 'document', id: 'nas/windows' });
+    expect(result.body.context.selection).toEqual({
+      kind: 'document',
+      id: 'nas/windows',
+      section: 0,
+      heading: 'First step',
+    });
   });
   test('only explicit content selection reads original native bytes; a changed or inaccessible source fails revalidation', async () => {
     let bytes = 'ORIGINAL';

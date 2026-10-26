@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
 import { Button } from '@librechat/client';
 import { HelpCircle, GripVertical } from 'lucide-react';
-import { QueryKeys, request } from 'librechat-data-provider';
-import type { HelpContext, TMessage } from 'librechat-data-provider';
+import type { TMessage } from 'librechat-data-provider';
 import { useGetStartupConfig } from '~/data-provider';
 import { useAuthContext, useLocalize } from '~/hooks';
+import HelpSource, { currentWorkSource } from './Source';
+import useHelpSession, { useHelpSourceUpdate } from './useHelpSession';
 
 type Layout = { x: number; y: number; dock: 'left' | 'right' | null };
 const key = 'garden-help-layout-v1';
@@ -60,58 +60,39 @@ export default function HelpMount({
   const [started, setStarted] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [view, setView] = useState(viewport);
-  const [context, setContext] = useState<HelpContext | null>(null);
+  const [ready, setReady] = useState(false);
   const [sourceError, setSourceError] = useState(false);
-  const [attachmentChoices, setAttachmentChoices] = useState<
-    Record<string, 'metadata' | 'content'>
-  >({});
   const opener = useRef<HTMLButtonElement>(null);
   const frame = useRef<HTMLIFrameElement>(null);
   const drag = useRef<{ x: number; y: number; start: Layout; moved: boolean } | null>(null);
   const suppressClick = useRef(false);
-  const initialized = useRef(false);
-  const session = useQuery<{
-    conversationId: string;
-    subject: string;
-    context: HelpContext | null;
-    siteURL: string;
-  }>({
-    queryKey: [QueryKeys.gardenHelpSession, user?.id],
-    queryFn: () => request.get('/api/garden/help/session'),
-    enabled: started,
-    staleTime: 0,
-    retry: false,
-  });
-  const update = useMutation({
-    mutationFn: async (clear: boolean) => {
-      const byId = new Map((messages ?? []).map((item) => [item.messageId, item]));
-      const ids: string[] = [];
-      let current = leafId;
-      while (current && byId.has(current) && ids.length < 16) {
-        ids.unshift(current);
-        current = byId.get(current)?.parentMessageId ?? undefined;
-      }
-      const attachments = ids.flatMap((id) =>
-        (byId.get(id)?.files ?? []).flatMap((file) => {
-          const choice = attachmentChoices[`${id}/${file.file_id}`];
-          return choice
-            ? [{ messageId: id, fileId: file.file_id, content: choice === 'content' }]
-            : [];
-        }),
-      );
-      return request.post('/api/garden/help/context', {
-        source:
-          !clear && ids.length && conversationId
-            ? { conversationId, messageIds: ids, attachments }
-            : null,
-      }) as Promise<{ context: HelpContext | null }>;
-    },
-    onSuccess: (value) => {
-      setContext(value.context);
+  const opening = useRef(false);
+  const actor = useRef(user?.id);
+  actor.current = user?.id;
+  const session = useHelpSession(started);
+  const initialUpdate = useHelpSourceUpdate();
+  const show = async () => {
+    setStarted(true);
+    setOpened(true);
+    if (opening.current || !user?.id) return;
+    opening.current = true;
+    const userId = user.id;
+    const selected = currentWorkSource({ conversationId, leafId, messages });
+    try {
+      const result = await session.refetch({ cancelRefetch: false });
+      if (actor.current !== userId) return;
+      // Only the deliberate first launch's newly inserted chat takes an
+      // initial snapshot. A cleared/existing session is never recaptured.
+      if (result.data?.created && !result.data.context && selected)
+        await initialUpdate.mutateAsync({ userId, selection: selected });
       setSourceError(false);
-    },
-    onError: () => setSourceError(true),
-  });
+    } catch {
+      if (actor.current === userId) setSourceError(true);
+    } finally {
+      opening.current = false;
+      if (actor.current === userId) setReady(true);
+    }
+  };
   const persist = (next: Layout) => {
     setLayout(next);
     try {
@@ -121,12 +102,11 @@ export default function HelpMount({
     }
   };
   useEffect(() => {
-    initialized.current = false;
+    opening.current = false;
     setOpened(false);
     setStarted(false);
-    setContext(null);
+    setReady(false);
     setSourceError(false);
-    setAttachmentChoices({});
   }, [user?.id]);
   useEffect(() => {
     const resize = () => {
@@ -142,12 +122,6 @@ export default function HelpMount({
       window.visualViewport?.removeEventListener('scroll', resize);
     };
   }, []);
-  useEffect(() => {
-    if (!session.data || initialized.current) return;
-    initialized.current = true;
-    setContext(session.data.context);
-    if (!session.data.context && leafId) update.mutate(false);
-  }, [session.data, leafId, update]);
   const close = () => {
     setOpened(false);
     setExpanded(false);
@@ -251,8 +225,7 @@ export default function HelpMount({
                 return;
               }
               suppressClick.current = false;
-              setStarted(true);
-              setOpened(true);
+              void show();
             }}
           >
             {docked && (
@@ -311,60 +284,7 @@ export default function HelpMount({
               {localize('com_ui_close')}
             </Button>
           </header>
-          <details className="shrink-0 border-b border-border-light px-3 text-sm">
-            <summary className="flex min-h-11 cursor-pointer items-center">
-              {localize('com_ui_help_source')} · {context?.evidence.length ?? 0}
-            </summary>
-            <div
-              className="max-h-40 overflow-y-auto"
-              tabIndex={0}
-              role="region"
-              aria-label={localize('com_ui_help_source')}
-            >
-              {context?.evidence.map((item) => (
-                <p key={item.source.id} className="whitespace-pre-wrap">
-                  {[item.source.range, item.text ?? item.name].join('\n')}
-                </p>
-              ))}
-            </div>
-            <fieldset className="max-h-40 overflow-y-auto">
-              <legend>{localize('com_ui_help_attachments')}</legend>
-              {(messages ?? []).flatMap((message) =>
-                (message.files ?? []).map((file) => {
-                  const id = `${message.messageId}/${file.file_id}`;
-                  return (
-                    <label key={id} className="flex min-h-11 items-center justify-between gap-2">
-                      <span>{file.filename}</span>
-                      <select
-                        value={attachmentChoices[id] ?? ''}
-                        onChange={(event) =>
-                          setAttachmentChoices((old) => {
-                            const next = { ...old };
-                            if (event.target.value)
-                              next[id] = event.target.value as 'metadata' | 'content';
-                            else delete next[id];
-                            return next;
-                          })
-                        }
-                      >
-                        <option value="">{localize('com_ui_help_exclude')}</option>
-                        <option value="metadata">{localize('com_ui_help_metadata')}</option>
-                        <option value="content">{localize('com_ui_help_content')}</option>
-                      </select>
-                    </label>
-                  );
-                }),
-              )}
-            </fieldset>
-            <div className="flex gap-2">
-              <Button disabled={update.isLoading} onClick={() => update.mutate(true)}>
-                {localize('com_ui_help_without')}
-              </Button>
-              <Button disabled={update.isLoading} onClick={() => update.mutate(false)}>
-                {localize('com_ui_help_update')}
-              </Button>
-            </div>
-          </details>
+          <HelpSource work={{ conversationId, leafId, messages }} active={opened} />
           {sourceError && <p role="alert">{localize('com_ui_help_source_error')}</p>}
           {session.isError && (
             <div role="alert" className="p-4">
@@ -373,9 +293,13 @@ export default function HelpMount({
             </div>
           )}
           {session.isLoading && <p role="status">{localize('com_ui_loading')}</p>}
-          {session.data && (
+          {ready && session.data && (
             <iframe
               ref={frame}
+              data-garden-help-panel="true"
+              onFocus={() => {
+                void session.refetch({ cancelRefetch: false });
+              }}
               title="Garden Help"
               className="min-h-0 w-full flex-1 border-0"
               src={`/c/${encodeURIComponent(session.data.conversationId)}?gardenHelp=1`}

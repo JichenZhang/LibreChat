@@ -15,7 +15,7 @@ export interface HelpChatMethods {
     user: string,
     conversationId: string,
     preset: Record<string, unknown>,
-  ): Promise<void>;
+  ): Promise<boolean>;
   readHelpChat(
     user: string,
     conversationId: string,
@@ -114,7 +114,7 @@ export function createHelpChatMethods(mongoose: typeof import('mongoose')): Help
     },
     async ensureHelpChat(user, conversationId, preset) {
       try {
-        await conversations().updateOne(
+        const inserted = await conversations().updateOne(
           { user, conversationId },
           {
             $setOnInsert: {
@@ -127,6 +127,7 @@ export function createHelpChatMethods(mongoose: typeof import('mongoose')): Help
           },
           { upsert: true },
         );
+        return inserted.upsertedCount === 1;
       } catch (error) {
         // Concurrent tabs can race the unique current-user Help chat upsert.
         if (
@@ -134,6 +135,7 @@ export function createHelpChatMethods(mongoose: typeof import('mongoose')): Help
           !(await conversations().exists({ user, conversationId, gardenHelp: true }))
         )
           throw error;
+        return false;
       }
     },
     async readHelpChat(user, conversationId) {

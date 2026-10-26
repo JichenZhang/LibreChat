@@ -42,6 +42,7 @@ export function helpDocumentSource(
   return {
     content: scope.content,
     label: scope.title ? `${document.url} · ${scope.title}` : document.url,
+    heading: scope.title,
     id: section === undefined ? id : `${id}#section=${section}`,
     revision: `${document.version}:${createHash('sha256').update(scope.content).digest('hex')}`,
     range:

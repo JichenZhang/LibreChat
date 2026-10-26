@@ -2,6 +2,7 @@ import { test, expect, request } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import mongoose from 'mongoose';
+import type { HelpSession } from 'librechat-data-provider';
 import { fetchJson, getAccessToken, sendMessageAndWaitForCompletion } from './helpers';
 
 const helpSite = 'http://127.0.0.1:25482';
@@ -64,6 +65,8 @@ test('work chat and one native Help frame keep separate drafts; expand, edge Han
   const frame = page.frameLocator('iframe[title="Garden Help"]');
   const input = frame.getByRole('textbox', { name: 'Message input' });
   await expect(input).toBeVisible();
+  await expect(panel.getByRole('region', { name: 'Source snapshot', exact: true })).toHaveCount(1);
+  await expect(frame.getByRole('region', { name: 'Source snapshot', exact: true })).toHaveCount(0);
   const source = page.locator('iframe[title="Garden Help"]');
   const sourceURL = await source.getAttribute('src');
   await frame.getByRole('button', { name: 'I am having trouble with Garden', exact: true }).click();
@@ -79,6 +82,8 @@ test('work chat and one native Help frame keep separate drafts; expand, edge Han
   await input.fill('PRIVATE HELP DRAFT');
   await panel.getByRole('button', { name: 'Expand', exact: true }).click();
   expect(await source.getAttribute('src')).toBe(sourceURL);
+  await expect(panel.getByRole('region', { name: 'Source snapshot', exact: true })).toHaveCount(1);
+  await expect(frame.getByRole('region', { name: 'Source snapshot', exact: true })).toHaveCount(0);
   await expect(main).toHaveValue('PRIVATE WORK DRAFT');
   await panel.getByRole('button', { name: 'Close', exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
@@ -141,6 +146,7 @@ test('native once approval copies verified source to real Help/PG, then own/shar
   browser,
 }) => {
   await page.getByRole('button', { name: 'Garden Help', exact: true }).click();
+  const panel = page.getByRole('region', { name: 'Garden Help', exact: true });
   const frame = page.frameLocator('iframe[title="Garden Help"]');
   const input = frame.getByRole('textbox', { name: 'Message input' });
   await expect(input).toBeVisible();
@@ -288,52 +294,111 @@ test('native once approval copies verified source to real Help/PG, then own/shar
   await expect(shared.getByRole('link', { name: '重新登录', exact: true })).toBeVisible();
   await maintainer.close();
   await bob.close();
-  // Use the real document/section action with an existing Help source/chat.
-  // This remains part of the two maintained representative journeys.
-  const beforeDocument = await fetchJson<{ conversationId: string }>(
-    page,
-    '/api/garden/help/session',
-    token,
-  );
-  await own.goto(helpSite + '/nas/windows/');
-  const documentEntry = own.getByRole('link', { name: '就本页求助', exact: true });
-  expect(await documentEntry.getAttribute('href')).toMatch(
-    /document=nas%2Fwindows&version=[a-f0-9]{64}/,
-  );
+  // Extend this maintained journey at the actual native/source boundary.
+  const currentSource = () => fetchJson<HelpSession>(page, '/api/garden/help/session', token);
+  const beforeDocument = await currentSource();
+  await sendMessageAndWaitForCompletion(page, 'E2E_REPLY:LATER_WORK_NOT_AUTOMATICALLY_INCLUDED');
+  expect((await currentSource()).context).toEqual(beforeDocument.context);
+  await input.fill('DOCUMENT HELP DRAFT');
+  await own.goto(helpSite + '/nas/');
+  expect(
+    await own.getByRole('link', { name: '就本页求助', exact: true }).getAttribute('href'),
+  ).toMatch(/document=nas%2Findex&version=[a-f0-9]{64}/);
   await own.getByRole('link', { name: '就此节求助', exact: true }).first().click();
   const documentFrame = own.frameLocator('iframe[title="Garden Help"]');
-  await expect(documentFrame.getByRole('textbox', { name: 'Message input' })).toBeVisible();
-  const sectionSource = await fetchJson<{
-    conversationId: string;
-    context: {
-      label: string;
-      evidence: { text: string; source: { id: string; range: string; revision: string } }[];
-    };
-  }>(page, '/api/garden/help/session', token);
-  expect(sectionSource.conversationId).toBe(beforeDocument.conversationId);
-  expect(sectionSource.context.evidence[0].source.id).toBe('nas/windows#section=0');
-  expect(sectionSource.context.evidence[0].text).toContain('## 第一步：打开 NAS 地址');
-  expect(sectionSource.context.evidence[0].text).not.toContain('## 第二步');
-  expect(sectionSource.context.evidence[0].source.range).toContain(
-    'Published section 1: 第一步：打开 NAS 地址',
+  const nativeSource = documentFrame.getByRole('region', { name: 'Source snapshot', exact: true });
+  await expect(documentFrame.getByRole('textbox', { name: 'Message input' })).toHaveValue(
+    'DOCUMENT HELP DRAFT',
   );
-  expect(sectionSource.context.evidence[0].source.revision).toMatch(/^[a-f0-9]{64}:[a-f0-9]{64}$/);
-  await documentFrame.getByRole('textbox', { name: 'Message input' }).fill('DOCUMENT HELP DRAFT');
-  await own.goto(helpSite + '/nas/windows/');
+  const sectionSource = await currentSource();
+  expect(sectionSource.conversationId).toBe(beforeDocument.conversationId);
+  expect(sectionSource.context!.evidence[0].source.id).toBe('nas/index#section=0');
+  await nativeSource.getByText(/View source snapshot/).click();
+  await expect(nativeSource.getByRole('region', { name: 'Selected source details' })).toContainText(
+    sectionSource.context!.evidence[0].source.range,
+  );
+  await nativeSource.getByRole('button', { name: 'Update source snapshot', exact: true }).click();
+  await expect
+    .poll(async () => (await currentSource()).context!.captured_at)
+    .not.toBe(sectionSource.context!.captured_at);
+  expect((await currentSource()).context!.selection).toEqual(sectionSource.context!.selection);
+  await expect(documentFrame.getByRole('textbox', { name: 'Message input' })).toHaveValue(
+    'DOCUMENT HELP DRAFT',
+  );
+  await page.bringToFront();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  const compactSource = panel.getByRole('region', { name: 'Source snapshot', exact: true });
+  await expect(compactSource.getByRole('status')).toHaveText(sectionSource.context!.label);
+  await expect(input).toHaveValue('DOCUMENT HELP DRAFT');
+
+  // History/direct entry has the same controls and unsent draft. Clearing in
+  // that view must remain clear in the already-open document/compact views.
+  const full = await page.context().newPage();
+  await full.goto('http://127.0.0.1:25483/c/' + encodeURIComponent(beforeDocument.conversationId));
+  const fullSource = full.getByRole('region', { name: 'Source snapshot', exact: true });
+  await expect(fullSource.getByRole('status')).toHaveText(sectionSource.context!.label);
+  await expect(full.getByRole('textbox', { name: 'Message input' })).toHaveValue(
+    'DOCUMENT HELP DRAFT',
+  );
+  await fullSource.getByRole('button', { name: 'Continue without source', exact: true }).click();
+  await expect(fullSource.getByText('No source included', { exact: true })).toBeVisible();
+  expect((await currentSource()).context).toBeNull();
+  await own.bringToFront();
+  await own.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await documentFrame.getByRole('textbox', { name: 'Message input' }).focus();
+  await expect(nativeSource.getByText('No source included', { exact: true })).toBeVisible();
+  await page.bringToFront();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(compactSource.getByText('No source included', { exact: true })).toBeVisible();
+  await panel.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.reload();
+  await page.getByRole('button', { name: 'Garden Help', exact: true }).click();
+  await expect(compactSource.getByText('No source included', { exact: true })).toBeVisible();
+  expect((await currentSource()).context).toBeNull();
+  await expect(input).toHaveValue('DOCUMENT HELP DRAFT');
+  await compactSource
+    .getByRole('button', { name: 'Update from this work chat', exact: true })
+    .click();
+  await expect.poll(async () => (await currentSource()).context?.selection?.kind).toBe('chat');
+  expect(
+    (await currentSource()).context!.evidence.some((e) =>
+      e.text?.includes('LATER_WORK_NOT_AUTOMATICALLY_INCLUDED'),
+    ),
+  ).toBe(true);
+  await full.bringToFront();
+  await full.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(fullSource.getByRole('status')).toContainText('Selected chat branch');
+  const explicitWork = (await currentSource()).context!.selection;
+  await fullSource.getByRole('button', { name: 'Update source snapshot', exact: true }).click();
+  await expect.poll(async () => (await currentSource()).context!.selection).toEqual(explicitWork);
+  await expect(full.getByRole('textbox', { name: 'Message input' })).toHaveValue(
+    'DOCUMENT HELP DRAFT',
+  );
+
+  // The other directory index and the original ordinary leaf both work.
+  await own.goto(helpSite + '/proxy/');
+  expect(
+    await own.getByRole('link', { name: '就本页求助', exact: true }).getAttribute('href'),
+  ).toMatch(/document=proxy%2Findex&version=[a-f0-9]{64}/);
   await own.getByRole('link', { name: '就本页求助', exact: true }).click();
   await expect(documentFrame.getByRole('textbox', { name: 'Message input' })).toHaveValue(
     'DOCUMENT HELP DRAFT',
   );
-  const wholeSource = await fetchJson<{
-    conversationId: string;
-    context: { evidence: { text: string; source: { id: string } }[] };
-  }>(page, '/api/garden/help/session', token);
-  expect(wholeSource.conversationId).toBe(beforeDocument.conversationId);
-  expect(wholeSource.context.evidence[0].source.id).toBe('nas/windows');
-  expect(wholeSource.context.evidence[0].text).toContain('## 第二步');
+  expect((await currentSource()).context!.evidence[0].source.id).toBe('proxy/index');
+  await own.goto(helpSite + '/nas/windows/');
+  await own.getByRole('link', { name: '就此节求助', exact: true }).first().click();
+  await expect(documentFrame.getByRole('textbox', { name: 'Message input' })).toHaveValue(
+    'DOCUMENT HELP DRAFT',
+  );
+  const leafSource = (await currentSource()).context!;
+  expect(leafSource.evidence[0].source.id).toBe('nas/windows#section=0');
+  expect(leafSource.evidence[0].text).toContain('## 第一步：打开 NAS 地址');
+  expect(leafSource.evidence[0].text).not.toContain('## 第二步');
+  await expect(nativeSource.getByRole('status')).toHaveText(leafSource.label);
   await own.screenshot({
-    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'U4R1-document-help.png'),
+    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'U4R2-document-source.png'),
     fullPage: false,
   });
+  await full.close();
   await own.close();
 });

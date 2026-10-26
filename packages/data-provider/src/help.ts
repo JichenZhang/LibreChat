@@ -27,10 +27,30 @@ export interface HelpPackage {
   user_urgency: HelpUrgency;
   ai_priority_suggestion: { level: HelpUrgency; reason: string } | null;
 }
+export type HelpSourceSelection =
+  | {
+      kind: 'chat';
+      conversationId: string;
+      messageIds: string[];
+      attachments?: { messageId: string; fileId: string; content: boolean }[];
+    }
+  | { kind: 'document'; id: string; section?: number; heading?: string };
 export interface HelpContext {
   evidence: HelpEvidence[];
   captured_at: string;
   label: string;
+  /** Server-verified selection recipe; refreshing it is always a user action. */
+  selection?: HelpSourceSelection;
+}
+export interface HelpSession {
+  userId: string;
+  conversationId: string;
+  subject: string;
+  context: HelpContext | null;
+  siteURL: string;
+  parentOrigins: string[];
+  /** True only for this request's successful native conversation insert. */
+  created: boolean;
 }
 export interface HelpSeal {
   submission_id: string;

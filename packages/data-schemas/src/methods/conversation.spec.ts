@@ -7807,11 +7807,17 @@ describe('Garden Help private native source and unique chat (R2, existing Mongo 
     const user = new mongoose.Types.ObjectId().toHexString();
     const other = new mongoose.Types.ObjectId().toHexString();
     const conversationId = uuidv4();
-    await Promise.all(
+    const created = await Promise.all(
       Array.from({ length: 8 }, () =>
         help.ensureHelpChat(user, conversationId, { endpoint: 'custom', model: 'help' }),
       ),
     );
+    expect(created.filter(Boolean)).toHaveLength(1);
+    await help.replaceHelpContext(user, conversationId, null);
+    expect(
+      await help.ensureHelpChat(user, conversationId, { endpoint: 'custom', model: 'help' }),
+    ).toBe(false);
+    expect((await help.readHelpChat(user, conversationId))?.gardenHelpContext).toBeUndefined();
     expect(await Conversation.countDocuments({ user, gardenHelp: true })).toBe(1);
     const fileId = uuidv4();
     const messageId = uuidv4();

@@ -35,6 +35,7 @@ import { cn, setDraft } from '~/utils';
 import store from '~/store';
 import HelpMount from './help/Mount';
 import HelpStarters from './help/Starters';
+import HelpSource, { hostedHelpSource } from './help/Source';
 import useHelpMode from './help/useHelpMode';
 
 function LoadingSpinner() {
@@ -94,7 +95,7 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
   }, [messages, fileMap]);
 
   const chatHelpers = useChatHelpers(index, conversationId);
-  const { isHelp: helpMode } = useHelpMode(
+  const { isHelp: helpMode, session: helpSession } = useHelpMode(
     chatHelpers.conversation?.conversationId === conversationId &&
       chatHelpers.conversation?.gardenHelp === true,
   );
@@ -202,6 +203,7 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
                         readOnly={isSubagentThreadReadOnly}
                       />
                     )}
+                    {helpMode && !hostedHelpSource() && <HelpSource />}
                     <>
                       <div
                         className={cn(
@@ -228,6 +230,9 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
                         is a stacking context; keep it above positioned tool glyphs
                         so they cannot paint through the approval preview. */}
                         <div
+                          onFocusCapture={() => {
+                            if (helpMode) void helpSession.refetch({ cancelRefetch: false });
+                          }}
                           className={cn(
                             'relative z-10 w-full bg-presentation [view-transition-name:chat-form]',
                             !isLandingPage && 'scrollbar-gutter-spacer',

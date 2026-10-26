@@ -134,6 +134,12 @@ export async function captureHelpContext(
     source.attachments?.length && req ? await captureHelpAttachments(req, db, source, deps) : [];
   const context = {
     captured_at: now,
+    selection: {
+      kind: 'chat' as const,
+      conversationId: source.conversationId,
+      messageIds: [...source.messageIds],
+      attachments: source.attachments ?? [],
+    },
     label:
       'Selected chat branch; at most 16 messages, 16384 characters per message; attachment content only when explicitly selected',
     evidence: [

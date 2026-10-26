@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@librechat/client';
 import { QueryKeys, request } from 'librechat-data-provider';
 import { useAuthContext, useLocalize } from '~/hooks';
+import useHelpSession from '~/components/Chat/help/useHelpSession';
 
 export default function HelpRoute() {
   const navigate = useNavigate();
@@ -12,11 +13,7 @@ export default function HelpRoute() {
   const { user } = useAuthContext();
   const client = useQueryClient();
   const [sourceFailed, setSourceFailed] = useState(false);
-  const session = useQuery<{ conversationId: string }>({
-    queryKey: [QueryKeys.gardenHelpSession, user?.id],
-    queryFn: () => request.get('/api/garden/help/session'),
-    retry: false,
-  });
+  const session = useHelpSession();
   const conversationId = session.data?.conversationId;
   useEffect(() => {
     if (!conversationId) return;

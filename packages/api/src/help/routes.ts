@@ -54,14 +54,16 @@ export function createGardenHelpRouter(db: HelpChatMethods, deps?: HelpDependenc
         const spec = req.config!.modelSpecs?.list?.find((item) => item.name === cfg.preset);
         if (!spec) return res.status(503).json({ error: { code: 'PRESET_UNAVAILABLE' } });
         const id = helpConversationId(req.user!.id);
-        await db.ensureHelpChat(req.user!.id, id, {
+        const created = await db.ensureHelpChat(req.user!.id, id, {
           ...spec.preset,
           spec: cfg.preset,
           endpointType: 'custom',
         });
         const chat = await db.readHelpChat(req.user!.id, id);
         return res.json({
+          userId: req.user!.id,
           conversationId: id,
+          created,
           subject: req.user!.openidId,
           context: chat?.gardenHelpContext ?? null,
           siteURL: cfg.siteURL,
@@ -108,6 +110,12 @@ export function createGardenHelpRouter(db: HelpChatMethods, deps?: HelpDependenc
         const context = {
           captured_at: now,
           label: selected.label,
+          selection: {
+            kind: 'document' as const,
+            id: input.data.id,
+            section: input.data.section,
+            heading: selected.heading,
+          },
           evidence: [
             {
               kind: 'original_text' as const,

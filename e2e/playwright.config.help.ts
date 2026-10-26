@@ -9,7 +9,7 @@ export default defineConfig({
   timeout: 60000,
   expect: { timeout: 15000 },
   reporter: 'list',
-  outputDir: '../../../output/implementation/garden-help/U2-browser-results',
+  outputDir: '../../../output/implementation/garden-help/.fixture/u4-browser-results',
   use: {
     ...devices['Desktop Chrome'],
     baseURL: 'http://127.0.0.1:25483',
@@ -17,6 +17,6 @@ export default defineConfig({
     headless: true,
     viewport: { width: 1280, height: 900 },
     screenshot: 'only-on-failure',
-    trace: 'retain-on-failure',
+    trace: 'off',
   },
 });

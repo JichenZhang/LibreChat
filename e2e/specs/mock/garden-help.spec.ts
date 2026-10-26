@@ -112,7 +112,7 @@ test('work chat and one native Help frame keep separate drafts; expand, edge Han
   await panel.getByRole('button', { name: 'Reset position', exact: true }).click();
   await expect(input).toHaveValue('PRIVATE HELP DRAFT');
   await page.screenshot({
-    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'U2-native-narrow.png'),
+    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'U4-native-narrow.png'),
     fullPage: false,
   });
   const bounded = await page.context().newPage();
@@ -122,7 +122,8 @@ test('work chat and one native Help frame keep separate drafts; expand, edge Han
   await expect(bounded.getByRole('button', { name: 'Select a model', exact: true })).toHaveCount(0);
   // Cold direct/history navigation must recover the server-owned Help marker.
   await bounded.goto(new URL(expected.pathname, 'http://127.0.0.1:25483').href);
-  await expect.poll(() => new URL(bounded.url()).searchParams.get('gardenHelp')).toBe('1');
+  // The server-owned marker can restore Help without normalizing its display query.
+  await expect.poll(() => new URL(bounded.url()).pathname).toBe(expected.pathname);
   await expect(bounded.getByRole('textbox', { name: 'Message input' })).toHaveValue(
     'PRIVATE HELP DRAFT',
   );
@@ -160,12 +161,12 @@ test('native once approval copies verified source to real Help/PG, then own/shar
     frame.getByText(/U2 work goal is to preserve the sheet layout/).last(),
   ).toBeVisible();
   await page.screenshot({
-    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'U2-native-approval.png'),
+    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'U4-native-approval.png'),
   });
   await frame.getByRole('button', { name: 'Submit to Garden Help', exact: true }).click();
   const ownLink = frame.getByRole('link', { name: 'My feedback', exact: true });
   await expect(ownLink).toBeVisible({ timeout: 30000 });
-  await page.screenshot({ path: resolve(process.env.E2E_HELP_EVIDENCE!, 'U2-native-receipt.png') });
+  await page.screenshot({ path: resolve(process.env.E2E_HELP_EVIDENCE!, 'U4-native-receipt.png') });
   const ownURL = (await ownLink.getAttribute('href'))!;
   const issueURL = (await frame
     .getByRole('link', { name: 'Shared issue', exact: true })
@@ -175,6 +176,7 @@ test('native once approval copies verified source to real Help/PG, then own/shar
   await own.goto(ownURL);
   await expect(own.getByText('仅你和 Garden Help 维护者可见', { exact: true })).toBeVisible();
   await expect(own.getByText(/PRIVATE WORK DRAFT/)).toHaveCount(0);
+  await own.getByText('原文片段 1', { exact: true }).click();
   await expect(own.getByText(/U2 work goal is to preserve the sheet layout/)).toBeVisible();
   const maintainer = await browser.newContext();
   await maintainer.addCookies([{ name: 'u2actor', value: 'u2-maintainer', url: helpSite }]);
@@ -194,17 +196,96 @@ test('native once approval copies verified source to real Help/PG, then own/shar
   const shared = await bob.newPage();
   await shared.goto(issueURL);
   await expect(
-    shared.getByText('U2 maintainer reviewed the approved summary.', { exact: true }),
+    shared.getByText('U2 maintainer reviewed the approved summary.', { exact: true }).first(),
   ).toBeVisible();
-  await expect(shared.getByText(/已计划/)).toBeVisible();
+  await expect(shared.getByText(/已计划/).first()).toBeVisible();
   const feedbackId = new URL(ownURL).searchParams.get('id');
   expect((await shared.request.get(`${helpSite}/api/help/feedback/${feedbackId}`)).status()).toBe(
     404,
   );
   await shared.screenshot({
-    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'U2-shared-progress.png'),
+    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'U4-shared-progress.png'),
     fullPage: false,
   });
+  await shared.getByLabel('你的紧急程度', { exact: true }).selectOption('P1');
+  await shared.getByRole('button', { name: '保存我的建议', exact: true }).click();
+  await expect(shared.getByText('你的建议已保存。', { exact: true })).toBeVisible();
+  await shared.goto(helpSite + '/feedback/');
+  await expect(
+    shared
+      .locator('article')
+      .filter({
+        has: shared.locator(
+          'a[href="' + new URL(issueURL).pathname + new URL(issueURL).search + '"]',
+        ),
+      })
+      .getByText('仅给过建议 · 你的紧急程度：P1', { exact: true }),
+  ).toBeVisible();
+  await shared.setViewportSize({ width: 390, height: 844 });
+  expect(await shared.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+    true,
+  );
+  await shared.screenshot({
+    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'U4-participation-narrow.png'),
+    fullPage: true,
+  });
+  const issueId = new URL(issueURL).searchParams.get('id');
+  await manage.goto(helpSite + '/manage/?id=' + issueId);
+  await expect(manage.getByText(/P1：1 人/)).toBeVisible();
+  await manage.getByText('查看个人建议', { exact: true }).click();
+  await expect(manage.getByText(/u2-bob · P1/)).toBeVisible();
+  await expect(manage.getByText('已授权的反馈摘要', { exact: true })).toBeVisible();
+  await manage.screenshot({
+    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'U4-maintainer.png'),
+    fullPage: true,
+  });
+  await own.goto(issueURL);
+  await own.getByLabel('你的紧急程度', { exact: true }).selectOption('P2');
+  await own.getByRole('button', { name: '保存我的建议', exact: true }).click();
+  await expect(own.getByText('你的建议已保存。', { exact: true })).toBeVisible();
+  await own.goto(ownURL);
+  await own.getByRole('button', { name: '删除我的反馈', exact: true }).click();
+  const deletion = own.getByRole('dialog');
+  await expect(deletion.getByRole('button', { name: '取消', exact: true })).toBeFocused();
+  await expect(deletion.getByText(/原聊天和当前紧急程度建议会保留/)).toBeVisible();
+  const deleting = own.waitForResponse(
+    (response) =>
+      response.url().includes('/api/help/feedback/') && response.request().method() === 'DELETE',
+  );
+  await deletion.getByRole('button', { name: '删除我的反馈', exact: true }).click();
+  const deleted = await deleting;
+  expect(await deleted.text()).toContain('deleted');
+  expect(deleted.status()).toBe(200);
+  await expect(
+    own.getByText('反馈及你提交的材料已删除；原聊天和当前意见保留。', { exact: true }),
+  ).toBeVisible();
+  await expect(
+    own
+      .locator('article')
+      .filter({
+        has: own.locator('a[href="' + new URL(issueURL).pathname + new URL(issueURL).search + '"]'),
+      })
+      .getByText('仅给过建议 · 你的紧急程度：P2', { exact: true }),
+  ).toBeVisible();
+  await own.goto(issueURL);
+  await own.getByRole('button', { name: '撤回我的建议', exact: true }).click();
+  await expect(own.getByText('你的建议已撤回。', { exact: true })).toBeVisible();
+  await shared.goto(helpSite + '/manage/');
+  await expect(
+    shared.getByText('你没有访问这份材料或管理操作的权限。', { exact: true }),
+  ).toBeVisible();
+  await shared.goto(issueURL);
+  await shared.getByLabel('你的紧急程度', { exact: true }).selectOption('P0');
+  await bob.addCookies([{ name: 'u2actor', value: 'u2-alice', url: helpSite }]);
+  await shared.evaluate(() => dispatchEvent(new Event('focus')));
+  await expect(
+    shared.getByText('身份或权限已变化，旧材料和编辑已清除。请重新加载。', { exact: true }),
+  ).toBeVisible();
+  await expect(shared.getByLabel('你的紧急程度', { exact: true })).toHaveCount(0);
+  await bob.clearCookies();
+  await shared.reload();
+  await expect(shared.getByText('登录已失效，请重新登录。', { exact: true })).toBeVisible();
+  await expect(shared.getByRole('link', { name: '重新登录', exact: true })).toBeVisible();
   await maintainer.close();
   await bob.close();
   await own.close();

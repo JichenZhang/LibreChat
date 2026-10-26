@@ -26,6 +26,7 @@ import { synthesizeBackgroundToolOptions } from '~/agents/background';
 import { mergeSynthesizedToolOptions } from '~/agents/selection';
 import { synthesizeIntentToolOptions } from '~/agents/intent';
 import { getCustomEndpointConfig } from '~/app/config';
+import { helpConversationId } from '~/help/runtime';
 
 const { mcp_all, mcp_delimiter } = Constants;
 type ModelParametersWithPromptPrefix = AgentModelParameters & { promptPrefix?: string | null };
@@ -54,6 +55,7 @@ export interface LoadAgentParams {
     user?: { id?: string; role?: string };
     config?: AppConfig;
     body?: {
+      conversationId?: string;
       promptPrefix?: string;
       ephemeralAgent?: TEphemeralAgent;
     };
@@ -77,7 +79,13 @@ export async function loadEphemeralAgent(
   if (spec != null && spec !== '') {
     modelSpec = modelSpecs?.list?.find((s) => s.name === spec) ?? null;
   }
-  const ephemeralAgent: TEphemeralAgent | undefined = req.body?.ephemeralAgent;
+  const isHelpChat =
+    req.config?.gardenHelp != null &&
+    req.user?.id != null &&
+    req.body?.conversationId === helpConversationId(req.user.id);
+  const ephemeralAgent: TEphemeralAgent | undefined = isHelpChat
+    ? undefined
+    : req.body?.ephemeralAgent;
   const userId = req.user?.id ?? '';
   /** The picker's own selection is narrowed to what the picker may offer; a
    *  spec's servers are the operator's choice and are added after, so pinning a
@@ -233,6 +241,25 @@ export async function loadAgent(
   deps: LoadAgentDeps,
 ): Promise<Agent | null> {
   const { req, spec, agent_id, endpoint, model_parameters } = params;
+  if (
+    req.config?.gardenHelp &&
+    req.user?.id &&
+    req.body?.conversationId === helpConversationId(req.user.id)
+  ) {
+    const helpSpec = req.config.modelSpecs?.list?.find(
+      (item) => item.name === req.config?.gardenHelp?.preset,
+    );
+    if (!helpSpec?.preset?.endpoint || !helpSpec.preset.model) return null;
+    return loadEphemeralAgent(
+      {
+        req,
+        spec: helpSpec.name,
+        endpoint: helpSpec.preset.endpoint,
+        model_parameters: helpSpec.preset as AgentModelParameters & { model: string },
+      },
+      deps,
+    );
+  }
   if (!agent_id) {
     return null;
   }

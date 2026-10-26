@@ -36,6 +36,7 @@ const roles = require('./roles');
 const oauth = require('./oauth');
 const files = require('./files');
 const gardenWorkspace = require('./gardenWorkspace');
+const gardenHelp = require('./gardenHelp');
 const share = require('./share');
 const tags = require('./tags');
 const auth = require('./auth');
@@ -46,6 +47,7 @@ const rum = require('./rum');
 const insights = require('./insights');
 
 module.exports = {
+  gardenHelp,
   insights,
   rum,
   mcp,

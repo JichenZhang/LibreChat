@@ -17,6 +17,7 @@ import type {
   AppConfig,
 } from '../types';
 import { ConversationMethods, createConversationMethods } from './conversation';
+import { createHelpChatMethods } from './help';
 import { tenantStorage, runAsSystem } from '~/config/tenantContext';
 import { createModels } from '../models';
 
@@ -208,6 +209,10 @@ describe('Conversation Operations', () => {
           checkpointNs: 'event-actor/other',
           checkpointId: 'other',
         },
+        gardenHelp: true,
+        gardenHelpContext: { evidence: ['forged'] },
+        gardenHelpExports: [{ submission_id: 'forged-approval' }],
+        'gardenHelpExports.0': { submission_id: 'forged-path' },
       };
       await saveConvo(mockCtx, { ...mockConversationData, ...forged });
       await methods.bulkSaveConvos([{ ...mockConversationData, user: mockCtx.userId, ...forged }]);
@@ -216,7 +221,7 @@ describe('Conversation Operations', () => {
         user: mockCtx.userId,
       })
         .select(
-          '+agentEventActor +agentEventActorCleanup +agentEventActorReconciliations +agentEventActorSuspension',
+          '+agentEventActor +agentEventActorCleanup +agentEventActorReconciliations +agentEventActorSuspension +gardenHelpContext +gardenHelpExports',
         )
         .lean();
       for (const field of Object.keys(forged)) {
@@ -7793,5 +7798,49 @@ describe('Conversation Operations', () => {
         titleMatch.conversationId,
       ]);
     });
+  });
+});
+
+describe('Garden Help private native source and unique chat (R2, existing Mongo fixture)', () => {
+  test('concurrent tabs share one chat; selected attachment requires owned conversation/message/file and current retention', async () => {
+    const help = createHelpChatMethods(mongoose);
+    const user = new mongoose.Types.ObjectId().toHexString();
+    const other = new mongoose.Types.ObjectId().toHexString();
+    const conversationId = uuidv4();
+    await Promise.all(
+      Array.from({ length: 8 }, () =>
+        help.ensureHelpChat(user, conversationId, { endpoint: 'custom', model: 'help' }),
+      ),
+    );
+    expect(await Conversation.countDocuments({ user, gardenHelp: true })).toBe(1);
+    const fileId = uuidv4();
+    const messageId = uuidv4();
+    await mongoose.models.Message.create({
+      messageId,
+      conversationId,
+      user,
+      isCreatedByUser: true,
+      files: [{ file_id: fileId }],
+      text: 'selected original',
+    });
+    await mongoose.models.File.create({
+      user,
+      file_id: fileId,
+      filename: 'fixture.txt',
+      filepath: '/fixture',
+      source: 'local',
+      expiredAt: new Date(Date.now() + 3600000),
+      bytes: 8,
+      type: 'text/plain',
+    });
+    expect((await help.readHelpAttachment(user, conversationId, messageId, fileId))?.filename).toBe(
+      'fixture.txt',
+    );
+    expect(await help.readHelpAttachment(other, conversationId, messageId, fileId)).toBeNull();
+    expect(
+      await help.readHelpAttachment(user, conversationId, 'different-message', fileId),
+    ).toBeNull();
+    await mongoose.models.File.updateOne({ file_id: fileId }, { $set: { expiredAt: new Date() } });
+    expect(await help.readHelpAttachment(user, conversationId, messageId, fileId)).toBeNull();
   });
 });

@@ -1,4 +1,5 @@
 export * from './app';
+export type { HelpChatMethods, HelpSourceMessage } from './methods/help';
 export * from './admin';
 export * from './common';
 export * from './crypto';

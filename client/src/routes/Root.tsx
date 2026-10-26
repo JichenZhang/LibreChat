@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, startTransition } from 'react';
 import { useRecoilValue } from 'recoil';
-import { Outlet } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
+import HelpBoundary from '~/components/Chat/help/Boundary';
 import { useMediaQuery } from '@librechat/client';
 import {
   UnifiedSidebar,
@@ -55,6 +56,8 @@ function KeyboardShortcutsProvider() {
 }
 
 export default function Root() {
+  const { search } = useLocation();
+  const helpMode = new URLSearchParams(search).has('gardenHelp');
   const [showTerms, setShowTerms] = useState(false);
   const [bannerHeight, setBannerHeight] = useState(0);
   /** Shared with the drawer so the two agree on the breakpoint-transition frame. */
@@ -167,7 +170,7 @@ export default function Root() {
                     {/* The drawer stops being painted once it is closed and
                         settled, so it needs the same travel window the scrim and
                         the pane's `inert` read. */}
-                    <UnifiedSidebar isSliding={isSliding} />
+                    {!helpMode && <UnifiedSidebar isSliding={isSliding} />}
                     <div
                       ref={paneRef}
                       /** Focus target of last resort when the drawer closes on a
@@ -186,7 +189,7 @@ export default function Root() {
                        *  too late and drops too early. */
                       inert={isSmallScreen && (sidebarExpanded || isSliding) ? '' : undefined}
                     >
-                      <Outlet />
+                      <HelpBoundary />
                     </div>
                     {/* Without the strip the scrim exists only for the travel:
                       through a close that began while the strip was still on

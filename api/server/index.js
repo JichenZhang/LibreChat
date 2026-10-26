@@ -19,6 +19,7 @@ const {
   apiNotFound,
   createMetrics,
   applyCspNonce,
+  applyGardenHelpFrameHeaders,
   createCspPolicy,
   shellCacheHeaders,
   escapeHtmlAttribute,
@@ -321,6 +322,7 @@ const startServer = async () => {
       updatedIndexHtml = applyCspNonce(updatedIndexHtml, csp.nonce);
     }
 
+    applyGardenHelpFrameHeaders(req, res, appConfig.gardenHelp);
     res.type('html');
     res.send(updatedIndexHtml);
   };
@@ -433,6 +435,7 @@ const startServer = async () => {
   app.use('/api/config', preAuthTenantMiddleware, optionalJwtAuth, routes.config);
   app.use('/api/assistants', routes.assistants);
   app.use('/api/garden/workspace', routes.gardenWorkspace);
+  app.use('/api/garden/help', routes.gardenHelp);
   app.use('/api/files', await routes.files.initialize());
   app.use(
     '/images/',

@@ -1,4 +1,7 @@
 import { GraphEvents } from '@librechat/agents';
+import { createHash } from 'node:crypto';
+import { HELP_PACKAGE_MAX_BYTES, HELP_SUBMIT_TOOL } from 'librechat-data-provider';
+import type { HelpApprovedExport, HelpSeal } from 'librechat-data-provider';
 import type {
   ToolApprovalDecision,
   ToolApprovalDecisionMap,
@@ -338,6 +341,7 @@ export function findIncompleteDecisions(
 export function resolveToolApprovalResume(
   payload: Agents.ToolApprovalInterruptPayload,
   resolutions: readonly Agents.ToolApprovalResolution[],
+  pending?: Pick<Agents.PendingAction, 'actionId'>,
 ):
   | { resumeValue: ToolApprovalDecisionMap }
   | { status: 400; error: string; undecided?: string[]; incomplete?: string[] }
@@ -364,7 +368,40 @@ export function resolveToolApprovalResume(
       incomplete,
     };
   }
-  return { resumeValue: mapToolApprovalResolutions(resolutions) };
+  const resumeValue = mapToolApprovalResolutions(resolutions);
+  for (const request of payload.action_requests) {
+    if (request.name !== HELP_SUBMIT_TOOL) continue;
+    const resolution = resolutions.find((r) => r.tool_call_id === request.tool_call_id);
+    const seal = request.arguments as unknown as HelpSeal;
+    if (
+      !pending ||
+      (resolution?.scope != null && resolution.scope !== 'once') ||
+      !seal ||
+      typeof seal.package_json !== 'string' ||
+      Buffer.byteLength(seal.package_json) > HELP_PACKAGE_MAX_BYTES ||
+      createHash('sha256').update(seal.package_json).digest('hex') !== seal.sha256
+    ) {
+      return {
+        status: 403,
+        error: 'Garden Help requires a fixed one-time approval',
+        disallowed: [request.tool_call_id],
+      };
+    }
+    if (resolution?.decision === 'approve') {
+      const approved: HelpApprovedExport = {
+        ...seal,
+        action_id: pending.actionId,
+        tool_call_id: request.tool_call_id,
+        confirmed_at: new Date().toISOString(),
+      };
+      const decision: ToolApprovalDecision & { gardenHelp: HelpApprovedExport } = {
+        type: 'approve',
+        gardenHelp: approved,
+      };
+      resumeValue[request.tool_call_id] = decision;
+    }
+  }
+  return { resumeValue };
 }
 
 /**

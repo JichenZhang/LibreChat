@@ -19,6 +19,7 @@ import dashboardRoutes from './Dashboard';
 import WithRum from '~/lib/rum/WithRum';
 import ShareRoute from './ShareRoute';
 import ChatRoute from './ChatRoute';
+import HelpRoute from './HelpRoute';
 import Search from './Search';
 import Root from './Root';
 
@@ -135,6 +136,7 @@ export const router = createBrowserRouter(
               path: 'c/:conversationId?',
               element: <ChatRoute />,
             },
+            { path: 'garden-help', element: <HelpRoute /> },
             {
               path: 'search',
               element: <Search />,

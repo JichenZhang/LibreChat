@@ -248,6 +248,9 @@ export interface ISubagentThreadReservation {
 
 // @ts-ignore
 export interface IConversation extends Document {
+  gardenHelp?: boolean;
+  gardenHelpContext?: import('librechat-data-provider').HelpContext;
+  gardenHelpExports?: import('librechat-data-provider').HelpApprovedExport[];
   conversationId: string;
   title?: string;
   user?: string;

@@ -36,6 +36,9 @@ const convoSchema: Schema<IConversation> = new Schema(
       meiliIndex: true,
     },
     messages: [{ type: Schema.Types.ObjectId, ref: 'Message' }],
+    gardenHelp: { type: Boolean },
+    gardenHelpContext: { type: Schema.Types.Mixed, select: false },
+    gardenHelpExports: { type: [Schema.Types.Mixed], select: false, default: undefined },
     isTemporary: {
       type: Boolean,
       default: false,
@@ -432,4 +435,8 @@ convoSchema.index(
 // index for MeiliSearch sync operations
 convoSchema.index({ _meiliIndex: 1, isTemporary: 1, expiredAt: 1 });
 
+convoSchema.index(
+  { user: 1, gardenHelp: 1 },
+  { unique: true, partialFilterExpression: { gardenHelp: true }, name: 'garden_help_chat_owner' },
+);
 export default convoSchema;

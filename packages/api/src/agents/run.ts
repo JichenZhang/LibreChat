@@ -2084,6 +2084,7 @@ function resolveRunTraceContext({
 }
 
 export async function createRun({
+  gardenHelp,
   runId,
   signal,
   conversationId,
@@ -2124,6 +2125,7 @@ export async function createRun({
   streaming = true,
   streamUsage = true,
 }: {
+  gardenHelp?: import('~/help/runtime').GardenHelpRuntime;
   agents: RunAgent[];
   signal: AbortSignal;
   runId?: string;
@@ -2268,7 +2270,10 @@ export async function createRun({
   'tokenCounter' | 'customHandlers' | 'indexTokenCountMap' | 'initialSessions'
 >): Promise<Run<IState>> {
   const resolvedRunId = runId ?? randomUUID();
+  if (gardenHelp && (!hitlCapable || agents.length !== 1))
+    throw new Error('GARDEN_HELP_NATIVE_RESUME_REQUIRED');
   const runFilesActive =
+    !gardenHelp &&
     runFiles?.activate(
       resolvedRunId,
       conversationId ?? requestBody?.conversationId ?? '',
@@ -2494,7 +2499,7 @@ export async function createRun({
      * resume surface, subagent child graphs that compile without a checkpointer,
      * admin-disabled) it is stripped fail-closed with no replacement.
      */
-    let tools = agent.tools;
+    let tools = gardenHelp && !isSubagent ? [] : agent.tools;
     let graphTools: GenericTool[] | undefined;
     if (agentRequestsAskUserQuestion(agent)) {
       tools = tools?.filter(
@@ -2512,6 +2517,12 @@ export async function createRun({
       }
     }
 
+    if (gardenHelp && !isSubagent && hitlCapable) {
+      tools = [];
+      toolDefinitions = [];
+      toolRegistry = new Map();
+      graphTools = gardenHelp.tools as unknown as GenericTool[];
+    }
     if (runFilesActive) {
       tools = eventOnlyRunFileTools(tools, toolDefinitions);
     }
@@ -2545,7 +2556,7 @@ export async function createRun({
       agentId: agent.id,
       tools,
       clientOptions: llmConfig,
-      instructions: systemContent,
+      instructions: gardenHelp && !isSubagent ? gardenHelp.instructions : systemContent,
       additional_instructions: additionalInstructions || undefined,
       name: agent.name ?? undefined,
       toolRegistry,
@@ -2694,10 +2705,12 @@ export async function createRun({
    */
   // Resolve the effective policy through the single seam so BYOM defaults and
   // future persisted per-agent / per-skill sources do not leak into this call site.
-  const toolApprovalPolicy = resolveToolApprovalPolicy({
-    endpoint: agentsEndpointConfig?.toolApproval,
-    attachedCodeEnvironment: attachedCodeEnvironmentAgentIds.size > 0,
-  });
+  const toolApprovalPolicy = gardenHelp
+    ? undefined
+    : resolveToolApprovalPolicy({
+        endpoint: agentsEndpointConfig?.toolApproval,
+        attachedCodeEnvironment: attachedCodeEnvironmentAgentIds.size > 0,
+      });
   // Every caller needs the policy hooks, including API-key ingresses. Only
   // AgentClient supports pause/resume; the SDK blocks `ask` without HITL enabled.
   // Keep the checkpointer and humanInTheLoop switch exclusive to those callers.
@@ -2796,7 +2809,7 @@ export async function createRun({
    */
   const asksUserQuestions =
     hitlCapable && !askToolAdminDisabled && agents.some(agentRequestsAskUserQuestion);
-  if (hitl || asksUserQuestions || eventActorCheckpointing) {
+  if (hitl || asksUserQuestions || (gardenHelp && hitlCapable) || eventActorCheckpointing) {
     const checkpointer = await getAgentCheckpointer(agentsEndpointConfig?.checkpointer);
     graphConfig.compileOptions = { ...graphConfig.compileOptions, checkpointer };
   }
@@ -2939,6 +2952,7 @@ export async function createRun({
         Constants.EXECUTE_CODE,
         Constants.BASH_TOOL,
         ASK_USER_QUESTION_TOOL_NAME,
+        'help_submit_feedback',
         /**
          * Background-capable tools: eager execution could launch the detached
          * task with speculative/partial args before the final tool call, and a

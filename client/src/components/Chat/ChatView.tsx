@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react';
+import { memo, useMemo, useEffect } from 'react';
 import { useAtomValue } from 'jotai';
 import { useRecoilValue } from 'recoil';
 import { useForm } from 'react-hook-form';
@@ -33,6 +33,8 @@ import Landing from './Landing';
 import Header from './Header';
 import { cn } from '~/utils';
 import store from '~/store';
+import HelpMount from './help/Mount';
+import HelpStarters from './help/Starters';
 
 function LoadingSpinner() {
   return (
@@ -46,6 +48,7 @@ function LoadingSpinner() {
 
 function ChatView({ index = 0, project }: { index?: number; project?: TChatProject }) {
   const { conversationId } = useParams();
+  const helpMode = new URLSearchParams(location.search).has('gardenHelp');
   const localize = useLocalize();
   const rootSubmission = useRecoilValue(store.submissionByIndex(index));
   const isSubmitting = useRecoilValue(store.isSubmittingFamily(index));
@@ -91,6 +94,16 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
   }, [messages, fileMap]);
 
   const chatHelpers = useChatHelpers(index, conversationId);
+  useEffect(() => {
+    if (!helpMode) return;
+    if (!isLoading) methods.setFocus('text');
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && window.parent !== window)
+        window.parent.postMessage({ type: 'garden-help-close' }, location.origin);
+    };
+    window.addEventListener('keydown', escape);
+    return () => window.removeEventListener('keydown', escape);
+  }, [helpMode, isLoading, methods]);
   const addedChatHelpers = useAddedResponse();
 
   const activeConversation =
@@ -117,7 +130,7 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
   let content: JSX.Element | null | undefined;
   const isLandingPage =
     (!messagesTree || messagesTree.length === 0) &&
-    (conversationId === Constants.NEW_CONVO || !conversationId);
+    (conversationId === Constants.NEW_CONVO || !conversationId || helpMode);
 
   /** A footer bar renders beneath the composer on the welcome screen always, and
    *  in a conversation when the deployment configured one. The shell already
@@ -134,7 +147,11 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
   } else if (!isLandingPage) {
     content = <MessagesView messagesTree={messagesTree} messages={messages} />;
   } else {
-    content = <Landing centerFormOnLanding={centerFormOnLanding} />;
+    content = helpMode ? (
+      <div className="p-4 text-base">Garden Help · AI</div>
+    ) : (
+      <Landing centerFormOnLanding={centerFormOnLanding} />
+    );
   }
 
   const chatFormPlaceholder =
@@ -166,10 +183,12 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
                 <Presentation>
                   <TraceSurface conversationId={conversationId}>
                     <h1 className="sr-only">{pageHeading}</h1>
-                    <Header
-                      parentConversationId={parentConversationId}
-                      readOnly={isSubagentThreadReadOnly}
-                    />
+                    {!helpMode && (
+                      <Header
+                        parentConversationId={parentConversationId}
+                        readOnly={isSubagentThreadReadOnly}
+                      />
+                    )}
                     <>
                       <div
                         className={cn(
@@ -202,7 +221,10 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
                             isLandingPage && 'max-w-3xl transition-all duration-200 xl:max-w-4xl',
                           )}
                         >
-                          {isLandingPage && <ConversationStarters />}
+                          {isLandingPage && !helpMode && <ConversationStarters />}
+                          {isLandingPage && helpMode && !isLoading && !isFetching && (
+                            <HelpStarters focus={() => methods.setFocus('text')} />
+                          )}
                           {isSubagentThreadReadOnly ? (
                             <div
                               className="mx-auto w-full max-w-3xl px-4 py-3 text-center text-sm text-text-secondary xl:max-w-4xl"
@@ -226,7 +248,14 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
                           {!isLandingPage && configuredFooter && <Footer configuredOnly />}
                         </div>
                       </div>
-                      {isLandingPage && <Footer />}
+                      {isLandingPage && !helpMode && <Footer />}
+                      {!helpMode && (
+                        <HelpMount
+                          conversationId={conversationId}
+                          leafId={chatHelpers.latestMessageId}
+                          messages={messages}
+                        />
+                      )}
                     </>
                   </TraceSurface>
                 </Presentation>

@@ -1,5 +1,10 @@
 import { randomUUID, createHash } from 'crypto';
-import { openAIBaseSchema, googleBaseSchema, anthropicBaseSchema } from 'librechat-data-provider';
+import {
+  HELP_SUBMIT_TOOL,
+  openAIBaseSchema,
+  googleBaseSchema,
+  anthropicBaseSchema,
+} from 'librechat-data-provider';
 import type { Agents, TToolApprovalPolicy } from 'librechat-data-provider';
 import type { ToolPolicyConfig } from '@librechat/agents';
 import type { MCPToolAlias } from '~/tools/classification';
@@ -825,9 +830,21 @@ export function computeLegacyAgentRequestFingerprint(
  * via the discriminated union — the host doesn't need to branch.
  */
 export function buildPendingAction(
-  payload: Agents.HumanInterruptPayload,
+  rawPayload:
+    | Agents.HumanInterruptPayload
+    | { type: 'garden_help_copy'; approval: Agents.ToolApprovalInterruptPayload },
   ctx: PendingActionContext,
 ): Agents.PendingAction {
+  // The SDK must resume the tool body's interrupt directly. Its generic tool-approval
+  // replay would otherwise replace original tool arguments with our sealed package.
+  const payload = rawPayload.type === 'garden_help_copy' ? rawPayload.approval : rawPayload;
+  if (
+    rawPayload.type === 'garden_help_copy' &&
+    (payload.type !== 'tool_approval' ||
+      payload.action_requests.length !== 1 ||
+      payload.action_requests[0].name !== HELP_SUBMIT_TOOL)
+  )
+    throw new Error('Invalid Help copy payload');
   if (payload.type === 'tool_approval' && !isToolApprovalPayloadValid(payload)) {
     throw new Error('Invalid tool approval payload');
   }

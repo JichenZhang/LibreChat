@@ -1,8 +1,11 @@
+const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 require('events').EventEmitter.defaultMaxListeners = 100;
 const { logger, MAX_AGENT_EVENT_ACTOR_ENCODING_LENGTH } = require('@librechat/data-schemas');
 const { getBufferString, HumanMessage } = require('@librechat/agents/langchain/messages');
 const {
   createRun,
+  createGardenHelpRuntime,
+  isGardenHelpRequest,
   isEnabled,
   checkAccess,
   buildRunToolSet,
@@ -4486,6 +4489,7 @@ class AgentClient extends BaseClient {
       ];
       const askUserQuestionAdminDisabled = isAskUserQuestionAdminDisabled(appConfig);
       const runCanPause = canAgentGraphPause({
+        gardenHelp: isGardenHelpRequest(this.options.req),
         policy: effectiveToolApprovalPolicy,
         agents: topLevelAgents,
         hostGeneratedToolNames:
@@ -4495,6 +4499,7 @@ class AgentClient extends BaseClient {
         askUserQuestionAdminDisabled,
       });
       const runUsesCheckpointer = agentRunUsesCheckpointer({
+        gardenHelp: isGardenHelpRequest(this.options.req),
         policy: effectiveToolApprovalPolicy,
         agents: topLevelAgents,
         askUserQuestionAdminDisabled,
@@ -4925,6 +4930,10 @@ class AgentClient extends BaseClient {
           activityPhase?.handlers(offsetHandlers) ??
           (activityLabel ? createAssistantPhaseStampingHandlers(offsetHandlers) : offsetHandlers);
         const createRunPromise = createRun({
+          gardenHelp: await createGardenHelpRuntime(this.options.req, db, this.parentMessageId, {
+            getStrategyFunctions,
+            workspaceSecret: process.env.GARDEN_WORKSPACE_MCP_SERVICE_SECRET,
+          }),
           agents,
           // Conversation-stable identity for the e2e run hook; a resumed run
           // carries no messages, so history cannot identify the conversation.
@@ -5736,6 +5745,10 @@ class AgentClient extends BaseClient {
         activityPhase?.handlers(offsetHandlers) ??
         (activityLabel ? createAssistantPhaseStampingHandlers(offsetHandlers) : offsetHandlers);
       run = await createRun({
+        gardenHelp: await createGardenHelpRuntime(this.options.req, db, this.parentMessageId, {
+          getStrategyFunctions,
+          workspaceSecret: process.env.GARDEN_WORKSPACE_MCP_SERVICE_SECRET,
+        }),
         agents,
         conversationId: this.conversationId,
         modelCallbacks: [

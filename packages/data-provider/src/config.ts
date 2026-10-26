@@ -2511,6 +2511,7 @@ export type StartupConfigContext = 'share';
 export type EndpointsDropParamsMap = Record<string, string[] | Record<string, string[]>>;
 
 export type TStartupConfig = {
+  gardenHelp?: boolean;
   appTitle: string;
   socialLogins?: string[];
   langfuseFanoutEnabled?: boolean;
@@ -3123,6 +3124,16 @@ export type TOpenIdDiscoveryConfig = z.infer<typeof openIdDiscoverySchema>;
 export const permissionWriteAttemptsSchema = z.number().int().min(1).max(100).default(3);
 
 export const configSchema = z.object({
+  gardenHelp: z
+    .object({
+      preset: z.string().default('garden-help'),
+      serviceURL: z.string().url(),
+      siteURL: z.string().url(),
+      toolSecretFile: z.string(),
+      workspaceURL: z.string().url(),
+      parentOrigins: z.array(z.string().url()).max(8),
+    })
+    .optional(),
   version: z.string(),
   permissions: z.object({ maxWriteAttempts: permissionWriteAttemptsSchema }).optional(),
   cache: z.boolean().default(true),

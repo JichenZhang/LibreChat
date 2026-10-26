@@ -1,4 +1,5 @@
 /* config */
+export * from './help';
 export * from './azure';
 export * from './bedrock';
 export * from './balance';

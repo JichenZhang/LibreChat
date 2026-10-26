@@ -37,6 +37,7 @@ export interface ToolApprovalAdmissionAgent {
 }
 
 export interface ToolApprovalAdmissionInput {
+  readonly gardenHelp?: boolean;
   readonly policy: TToolApprovalPolicy | undefined;
   readonly agents: readonly (ToolApprovalAdmissionAgent | null | undefined)[];
   readonly hostGeneratedToolNames?: readonly string[];
@@ -93,6 +94,7 @@ function collectApprovalAgents(roots: readonly (ToolApprovalAdmissionAgent | nul
  * boundary remains the final fail-closed durability check.
  */
 export function canAgentGraphPause({
+  gardenHelp = false,
   policy,
   agents,
   hostGeneratedToolNames = [],
@@ -100,6 +102,7 @@ export function canAgentGraphPause({
   pluginHookSource,
   askUserQuestionAdminDisabled = false,
 }: ToolApprovalAdmissionInput): boolean {
+  if (gardenHelp) return true;
   const asksUserQuestion =
     !askUserQuestionAdminDisabled &&
     !isToolDeniedByApprovalPolicy(policy, ASK_USER_QUESTION_TOOL_NAME) &&
@@ -184,14 +187,16 @@ export function canAgentGraphPause({
  * restore remnants written before a policy or request-hook change.
  */
 export function agentRunUsesCheckpointer({
+  gardenHelp = false,
   policy,
   agents,
   askUserQuestionAdminDisabled = false,
 }: Pick<
   ToolApprovalAdmissionInput,
-  'policy' | 'agents' | 'askUserQuestionAdminDisabled'
+  'policy' | 'agents' | 'askUserQuestionAdminDisabled' | 'gardenHelp'
 >): boolean {
   return (
+    gardenHelp ||
     isHITLEnabled(policy) ||
     (!askUserQuestionAdminDisabled &&
       agents.some((agent) => agent != null && agentHasTool(agent, ASK_USER_QUESTION_TOOL_NAME)))

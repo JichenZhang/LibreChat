@@ -16,6 +16,7 @@ import { buildApprovalPreview, buildApprovalPreviews } from '~/components/Chat/a
 import ToolApproval from '~/components/Chat/Messages/Content/ToolApproval';
 import { useComposerOverlay } from '~/components/Chat/Input/overlay';
 import { useLocalize } from '~/hooks';
+import HelpApproval from '../help/Approval';
 
 function usePendingToolApproval(conversationId: string) {
   const pendingAction = useAtomValue(pendingApprovalActionFamily(conversationId));
@@ -91,6 +92,12 @@ export const PendingToolApprovalPanel = memo(function PendingToolApprovalPanel({
   const decisions = getDecisions(pendingAction.actionId);
   const status = getStatus(pendingAction.actionId);
   const locked = status === 'submitting' || status === 'submitted' || status === 'expired';
+  if (
+    pendingAction.payload.action_requests.length === 1 &&
+    pendingAction.payload.action_requests[0].name === 'help_submit_feedback'
+  ) {
+    return <HelpApproval pending={pendingAction} />;
+  }
 
   return (
     <div

@@ -3043,6 +3043,38 @@ function codeExecResponses({ filename, toolCallId, finalText, code }, toolNames)
 }
 
 function resolveResponses({ graph, messages, text, toolNames }) {
+  if (text.includes('E2E_GARDEN_HELP_SUBMIT')) {
+    return {
+      responses: ['', 'Feedback copy saved only after the real native approval.'],
+      toolCalls: [
+        {
+          id: 'e2e-garden-help-copy',
+          name: 'help_submit_feedback',
+          type: 'tool_call',
+          args: {
+            shared: {
+              title: 'U2: preserve spreadsheet formatting',
+              description: 'Editing a sheet changes its formatting.',
+              module: 'files',
+              expected_change: 'Preserve the original layout.',
+            },
+            summary: {
+              goal: 'Edit a quotation sheet',
+              impact: 'Manual repair takes time',
+              attempts: 'Retried once',
+              still_blocked: false,
+            },
+            evidence_ids: text.match(/E2E_HELP_EVIDENCE=([A-Za-z0-9_/-]+)/)?.[1]
+              ? [text.match(/E2E_HELP_EVIDENCE=([A-Za-z0-9_/-]+)/)[1]]
+              : [],
+            urgency_message_id: null,
+            ai_priority_suggestion: { level: 'P2', reason: 'A manual workaround is available.' },
+            association: null,
+          },
+        },
+      ],
+    };
+  }
   const lifecycle = runFileLifecycle.responsesForText(text);
   if (lifecycle) return lifecycle;
 

@@ -1,4 +1,7 @@
 export * from './app';
+export * from './help/runtime';
+export * from './help/routes';
+export * from './help/frames';
 export * from './acl/accessControlService';
 export * from './acl/insightsPermissions';
 export * from './acl/middleware';

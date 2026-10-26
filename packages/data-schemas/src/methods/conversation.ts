@@ -60,6 +60,14 @@ const ACTOR_CHECKPOINT_FIELDS = [
 
 function stripActorCheckpointFields(record: Record<string, unknown>): void {
   for (const key of Object.keys(record)) {
+    if (
+      ['gardenHelp', 'gardenHelpContext', 'gardenHelpExports'].some(
+        (field) => key === field || key.startsWith(`${field}.`),
+      )
+    ) {
+      delete record[key];
+      continue;
+    }
     if (ACTOR_CHECKPOINT_FIELDS.some((field) => key === field || key.startsWith(`${field}.`))) {
       delete record[key];
     }

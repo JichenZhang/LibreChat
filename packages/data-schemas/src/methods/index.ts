@@ -67,6 +67,7 @@ import { createCategoriesMethods, type CategoriesMethods } from './categories';
 import { createPresetMethods, type PresetMethods } from './preset';
 /* Tier 2 — Moderate (service deps injected) */
 import { createConversationTagMethods, type ConversationTagMethods } from './conversationTag';
+import { createHelpChatMethods, type HelpChatMethods } from './help';
 import { createConversationImportMethods, type ConversationImportMethods } from './import';
 import {
   createMessageMethods,
@@ -253,6 +254,7 @@ export type AllMethods = UserMethods &
   CategoriesMethods &
   PresetMethods &
   ConversationTagMethods &
+  HelpChatMethods &
   ConversationImportMethods &
   MessageMethods &
   ConversationMethods &
@@ -485,6 +487,7 @@ export function createMethods(
     ...createPresetMethods(mongoose),
     /* Tier 2 */
     ...createConversationTagMethods(mongoose),
+    ...createHelpChatMethods(mongoose),
     ...createConversationImportMethods(mongoose),
     ...messageMethods,
     ...conversationMethods,

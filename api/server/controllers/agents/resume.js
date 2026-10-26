@@ -377,7 +377,7 @@ function resolveResumeValue(pendingAction, body) {
   const payload = pendingAction.payload;
   if (payload?.type === 'tool_approval') {
     const resolutions = Array.isArray(body.decisions) ? body.decisions : [];
-    return resolveToolApprovalResume(payload, resolutions);
+    return resolveToolApprovalResume(payload, resolutions, pendingAction);
   }
   if (payload?.type === 'ask_user_question') {
     return resolveAskUserQuestionResume(payload, body);

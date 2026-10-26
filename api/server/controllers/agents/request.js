@@ -9,6 +9,7 @@ const {
 } = require('librechat-data-provider');
 const {
   toPendingSteer,
+  isGardenHelpRequest,
   getViolationInfo,
   buildMessageFiles,
   getReferencedQuotes,
@@ -2032,6 +2033,7 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
       ...(client?.agentConfigs?.values?.() ?? []),
     ].filter(Boolean);
     const eventActorMayPause =
+      isGardenHelpRequest(req) ||
       isHITLEnabled(agentsConfig?.toolApproval) ||
       eventActorAgents.some(agentRequestsAskUserQuestion);
     const turnExecutionPlan = resolveAgentTurnExecutionPlan({

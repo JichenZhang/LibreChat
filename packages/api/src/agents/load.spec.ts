@@ -1,12 +1,58 @@
 import { EModelEndpoint, parseEphemeralAgentId } from 'librechat-data-provider';
 import type { LoadAgentDeps } from './load';
-import { loadEphemeralAgent } from './load';
+import { loadAgent, loadEphemeralAgent } from './load';
+import { helpConversationId } from '~/help/runtime';
 import { resolveSender } from './sender';
 
 const deps: LoadAgentDeps = {
   getAgent: async () => null,
   getMCPServerTools: async () => null,
 };
+
+test('the native Help conversation ignores a forged work Agent and execution/MCP capabilities', async () => {
+  const req = {
+    user: { id: 'help-owner' },
+    body: {
+      conversationId: helpConversationId('help-owner'),
+      ephemeralAgent: {
+        execute_code: true,
+        mcp: ['workspace-mcp'],
+        ask_user_question: true,
+        web_search: true,
+      },
+    },
+    config: {
+      gardenHelp: { preset: 'garden-help' },
+      modelSpecs: {
+        list: [
+          {
+            name: 'garden-help',
+            label: 'Garden Help',
+            skills: false,
+            preset: { endpoint: 'my-custom-endpoint', model: 'fixed-help-model' },
+          },
+        ],
+      },
+    },
+  } as unknown as Parameters<typeof loadAgent>[0]['req'];
+  const getAgent = jest.fn();
+  const getMCPServerTools = jest.fn();
+  const agent = await loadAgent(
+    {
+      req,
+      agent_id: 'forged-work-agent',
+      spec: 'work',
+      endpoint: 'work',
+      model_parameters: { model: 'forged' } as Parameters<typeof loadAgent>[0]['model_parameters'],
+    },
+    { getAgent, getMCPServerTools },
+  );
+  expect(agent?.tools).toEqual([]);
+  expect(agent?.model).toBe('fixed-help-model');
+  expect(agent?.skills_enabled).toBe(false);
+  expect(getAgent).not.toHaveBeenCalled();
+  expect(getMCPServerTools).not.toHaveBeenCalled();
+});
 
 const baseReq = {
   user: { id: 'user-1' },

@@ -171,6 +171,7 @@ export const AppService = async (params?: {
   const langfuse = loadLangfuseConfig(config);
 
   const defaultConfig = {
+    gardenHelp: config.gardenHelp,
     ocr,
     paths,
     config,

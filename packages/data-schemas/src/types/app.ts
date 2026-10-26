@@ -47,6 +47,7 @@ export interface FunctionTool {
  * Based on the configuration defined in api/server/services/Config/getAppConfig.js
  */
 export interface AppConfig {
+  gardenHelp?: import('librechat-data-provider').TCustomConfig['gardenHelp'];
   /** The main custom configuration */
   config: Partial<TCustomConfig>;
   /** OCR configuration */

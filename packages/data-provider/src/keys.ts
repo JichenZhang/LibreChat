@@ -1,4 +1,5 @@
 export enum QueryKeys {
+  gardenHelpSession = 'gardenHelpSession',
   messages = 'messages',
   sharedMessages = 'sharedMessages',
   sharedStartupConfig = 'sharedStartupConfig',

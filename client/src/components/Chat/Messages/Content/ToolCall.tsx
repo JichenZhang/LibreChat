@@ -23,6 +23,7 @@ import { TOOL_ROW_CLASSES } from './rows';
 import { ToolAuthWarning } from './auth';
 import { firstErrorLine } from './live';
 import store from '~/store';
+import HelpReceiptView from '../../help/Receipt';
 
 export default function ToolCall({
   initialProgress = 0.1,
@@ -367,6 +368,7 @@ export default function ToolCall({
     return null;
   }
 
+  if (name === 'help_submit_feedback') return <HelpReceiptView output={output ?? undefined} />;
   return (
     <>
       {/* The live region gets a STABLE in-progress value: the streaming

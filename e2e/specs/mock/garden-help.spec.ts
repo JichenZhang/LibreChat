@@ -288,5 +288,52 @@ test('native once approval copies verified source to real Help/PG, then own/shar
   await expect(shared.getByRole('link', { name: '重新登录', exact: true })).toBeVisible();
   await maintainer.close();
   await bob.close();
+  // Use the real document/section action with an existing Help source/chat.
+  // This remains part of the two maintained representative journeys.
+  const beforeDocument = await fetchJson<{ conversationId: string }>(
+    page,
+    '/api/garden/help/session',
+    token,
+  );
+  await own.goto(helpSite + '/nas/windows/');
+  const documentEntry = own.getByRole('link', { name: '就本页求助', exact: true });
+  expect(await documentEntry.getAttribute('href')).toMatch(
+    /document=nas%2Fwindows&version=[a-f0-9]{64}/,
+  );
+  await own.getByRole('link', { name: '就此节求助', exact: true }).first().click();
+  const documentFrame = own.frameLocator('iframe[title="Garden Help"]');
+  await expect(documentFrame.getByRole('textbox', { name: 'Message input' })).toBeVisible();
+  const sectionSource = await fetchJson<{
+    conversationId: string;
+    context: {
+      label: string;
+      evidence: { text: string; source: { id: string; range: string; revision: string } }[];
+    };
+  }>(page, '/api/garden/help/session', token);
+  expect(sectionSource.conversationId).toBe(beforeDocument.conversationId);
+  expect(sectionSource.context.evidence[0].source.id).toBe('nas/windows#section=0');
+  expect(sectionSource.context.evidence[0].text).toContain('## 第一步：打开 NAS 地址');
+  expect(sectionSource.context.evidence[0].text).not.toContain('## 第二步');
+  expect(sectionSource.context.evidence[0].source.range).toContain(
+    'Published section 1: 第一步：打开 NAS 地址',
+  );
+  expect(sectionSource.context.evidence[0].source.revision).toMatch(/^[a-f0-9]{64}:[a-f0-9]{64}$/);
+  await documentFrame.getByRole('textbox', { name: 'Message input' }).fill('DOCUMENT HELP DRAFT');
+  await own.goto(helpSite + '/nas/windows/');
+  await own.getByRole('link', { name: '就本页求助', exact: true }).click();
+  await expect(documentFrame.getByRole('textbox', { name: 'Message input' })).toHaveValue(
+    'DOCUMENT HELP DRAFT',
+  );
+  const wholeSource = await fetchJson<{
+    conversationId: string;
+    context: { evidence: { text: string; source: { id: string } }[] };
+  }>(page, '/api/garden/help/session', token);
+  expect(wholeSource.conversationId).toBe(beforeDocument.conversationId);
+  expect(wholeSource.context.evidence[0].source.id).toBe('nas/windows');
+  expect(wholeSource.context.evidence[0].text).toContain('## 第二步');
+  await own.screenshot({
+    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'U4R1-document-help.png'),
+    fullPage: false,
+  });
   await own.close();
 });

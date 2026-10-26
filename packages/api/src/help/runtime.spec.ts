@@ -1,6 +1,9 @@
 import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
-import { readHelpKnowledge } from './workspace';
+import { helpDocumentSource, readHelpKnowledge } from './workspace';
+import express from 'express';
+import request from 'supertest';
+import { createGardenHelpRouter } from './routes';
 import { captureHelpAttachments, verifyHelpAttachment } from './attachments';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -268,6 +271,102 @@ describe('Garden Help fixed native approval (R2; existing SDK ToolNode/MemorySav
 
 describe('Garden Help selected attachment and readonly Workspace boundaries (R2)', () => {
   afterEach(() => jest.restoreAllMocks());
+  test('real document route replaces the previous source with the exact versioned section and refuses stale or mismatched scope', async () => {
+    const version = 'a'.repeat(64);
+    const content =
+      '# Published title\n\n## First step\nFIRST BODY\n### Child step\nCHILD BODY\n```md\n## Not a heading\n```\n## Second step\nSECOND BODY\n';
+    const manifest = JSON.stringify({
+      version,
+      documents: [
+        {
+          id: 'nas/windows',
+          url: 'https://help.example.test/nas/windows/',
+          sha256: createHash('sha256').update(content).digest('hex'),
+        },
+      ],
+    });
+    jest.spyOn(global, 'fetch').mockImplementation(async (_url, options) => {
+      const rpc = JSON.parse(String(options?.body));
+      const data = rpc.params.arguments.path === 'Help/manifest.json' ? manifest : content;
+      return new Response(
+        JSON.stringify({
+          result: {
+            structuredContent: {
+              ok: true,
+              truncated: false,
+              content_base64: Buffer.from(data).toString('base64'),
+            },
+          },
+        }),
+      );
+    });
+    let context: unknown = { label: 'previous work source' };
+    const db = {
+      replaceHelpContext: jest.fn(async (_user, _id, next) => {
+        context = next;
+        return true;
+      }),
+    } as unknown as HelpChatMethods;
+    const app = express();
+    app.use(express.json(), (req, _res, next) => {
+      Object.assign(req, {
+        user: { id: 'native-owner', openidId: 'trusted-subject' },
+        config: {
+          gardenHelp: {
+            preset: 'garden-help',
+            serviceURL: 'http://help/mcp',
+            siteURL: 'https://help.example.test',
+            toolSecretFile: '/fixture/secret',
+            workspaceURL: 'http://workspace/mcp',
+            parentOrigins: ['https://help.example.test'],
+          },
+        },
+      });
+      next();
+    });
+    app.use('/help', createGardenHelpRouter(db, { workspaceSecret: 'fixture' }));
+    const post = (body: Record<string, unknown>) =>
+      request(app).post('/help/document').set('Origin', 'https://help.example.test').send(body);
+    const result = await post({ id: 'nas/windows', version, section: 0, heading: 'First step' });
+    expect(result.status).toBe(200);
+    const scope = helpDocumentSource(
+      'nas/windows',
+      { version, url: 'https://help.example.test/nas/windows/', content },
+      0,
+    );
+    expect(result.body.context.evidence).toEqual([
+      expect.objectContaining({
+        text: scope.content,
+        source: expect.objectContaining({
+          id: scope.id,
+          range: scope.range,
+          revision: scope.revision,
+        }),
+      }),
+    ]);
+    expect(scope.content).toContain('CHILD BODY');
+    expect(scope.content).not.toContain('SECOND BODY');
+    expect(context).not.toEqual(expect.objectContaining({ label: 'previous work source' }));
+    const retained = context;
+    expect(
+      (
+        await post({
+          id: 'nas/windows',
+          version: 'b'.repeat(64),
+          section: 0,
+          heading: 'First step',
+        })
+      ).status,
+    ).toBe(409);
+    expect(
+      (await post({ id: 'nas/windows', version, section: 1, heading: 'Second step' })).status,
+    ).toBe(409);
+    expect(context).toBe(retained);
+    const whole = await post({ id: 'nas/windows', version });
+    expect(whole.status).toBe(200);
+    expect(whole.body.context.evidence[0].text).toBe(content);
+    expect(whole.body.context.evidence[0].source.id).toBe('nas/windows');
+  });
   test('only explicit content selection reads original native bytes; a changed or inaccessible source fails revalidation', async () => {
     let bytes = 'ORIGINAL';
     const req = { user: { id: 'native-owner' } } as ServerRequest;
@@ -291,6 +390,40 @@ describe('Garden Help selected attachment and readonly Workspace boundaries (R2)
     const metadata = await captureHelpAttachments(req, db, selected, deps);
     expect(download).not.toHaveBeenCalled();
     expect(metadata[0].content_base64).toBeUndefined();
+    expect(JSON.parse(metadata[0].text!)).toEqual({
+      name: 'fixture.txt',
+      media_type: 'text/plain',
+      bytes: 8,
+    });
+    // The scoped cross-repository contract check feeds these exact production
+    // bytes to Go, including its approval and receiver boundary.
+    if (process.env.HELP_ATTACHMENT_CONTRACT_OUTPUT) {
+      const value: HelpPackage = {
+        schema_version: 1,
+        shared: {
+          title: 'Selected attachment metadata',
+          description: 'Metadata only',
+          module: 'files',
+          expected_change: 'Keep the selected metadata',
+        },
+        summary: {
+          goal: 'Metadata without content',
+          impact: '',
+          attempts: '',
+          still_blocked: null,
+        },
+        evidence: metadata,
+        visibility: { shared: 'garden_authenticated', private: 'owner_and_help_maintainers' },
+        user_urgency: null,
+        opinion_revision: 0,
+        association: null,
+        ai_priority_suggestion: null,
+      };
+      await writeFile(
+        process.env.HELP_ATTACHMENT_CONTRACT_OUTPUT,
+        sealHelpPackage(value).package_json,
+      );
+    }
     selected.attachments[0].content = true;
     const evidence = await captureHelpAttachments(req, db, selected, deps);
     expect(evidence[0].content_base64).toBe(Buffer.from('ORIGINAL').toString('base64'));

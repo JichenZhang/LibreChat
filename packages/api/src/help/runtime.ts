@@ -16,7 +16,7 @@ import type {
 } from 'librechat-data-provider';
 import type { HelpChatMethods, HelpSourceMessage } from '@librechat/data-schemas';
 import { buildToolApprovalPayload } from '~/agents/hitl/policy';
-import { readHelpKnowledge } from './workspace';
+import { helpDocumentSource, readHelpKnowledge } from './workspace';
 import { captureHelpAttachments, verifyHelpAttachment } from './attachments';
 import type { HelpDependencies } from './attachments';
 
@@ -230,16 +230,26 @@ async function verifyEvidence(
     if (item.source.kind === 'help_document') {
       try {
         const config = resolveGardenHelpConfig(req.config?.gardenHelp)!;
+        const parts = item.source.id.match(
+          /^([a-z0-9]+(?:[/-][a-z0-9]+)*)(?:#section=(0|[1-9][0-9]*))?$/,
+        );
+        if (!parts) return false;
         const current = await readHelpKnowledge(
           config.workspaceURL,
           req.user!.openidId!,
           deps?.workspaceSecret,
-          item.source.id,
+          parts[1],
+        );
+        const selected = helpDocumentSource(
+          parts[1],
+          current,
+          parts[2] === undefined ? undefined : Number(parts[2]),
         );
         if (
           item.kind !== 'original_text' ||
-          item.text !== current.content ||
-          item.source.revision !== `${current.version}:${hash(current.content)}`
+          item.text !== selected.content ||
+          item.source.revision !== selected.revision ||
+          item.source.range !== selected.range
         )
           return false;
       } catch {

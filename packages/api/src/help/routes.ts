@@ -2,8 +2,7 @@ import { Router } from 'express';
 import type { Request, Response, RequestHandler } from 'express';
 import type { AppConfig, IUser } from '@librechat/data-schemas';
 import { z } from 'zod';
-import { createHash } from 'node:crypto';
-import { readHelpKnowledge } from './workspace';
+import { helpDocumentSource, readHelpKnowledge } from './workspace';
 import type { HelpChatMethods } from '@librechat/data-schemas';
 import type { ServerRequest } from '~/types/http';
 import type { HelpDependencies } from './attachments';
@@ -77,7 +76,15 @@ export function createGardenHelpRouter(db: HelpChatMethods, deps?: HelpDependenc
     '/document',
     wrap(async (req, res) => {
       const input = z
-        .object({ id: z.string().max(128) })
+        .object({
+          id: z.string().max(128),
+          version: z
+            .string()
+            .regex(/^[a-f0-9]{64}$/)
+            .optional(),
+          section: z.number().int().min(0).max(1000).optional(),
+          heading: z.string().max(512).optional(),
+        })
         .strict()
         .safeParse(req.body);
       if (!input.success) return res.status(400).json({ error: { code: 'INVALID_SOURCE' } });
@@ -90,19 +97,27 @@ export function createGardenHelpRouter(db: HelpChatMethods, deps?: HelpDependenc
           input.data.id,
         );
         const now = new Date().toISOString();
+        if (input.data.version && input.data.version !== document.version)
+          throw new Error('SOURCE_STALE');
+        const selected = helpDocumentSource(
+          input.data.id,
+          document,
+          input.data.section,
+          input.data.heading,
+        );
         const context = {
           captured_at: now,
-          label: document.url,
+          label: selected.label,
           evidence: [
             {
               kind: 'original_text' as const,
-              text: document.content,
+              text: selected.content,
               source: {
                 kind: 'help_document' as const,
-                id: input.data.id,
-                revision: `${document.version}:${createHash('sha256').update(document.content).digest('hex')}`,
+                id: selected.id,
+                revision: selected.revision,
                 retrieved_at: now,
-                range: `Entire published chapter: ${document.url}; version ${document.version}`,
+                range: selected.range,
               },
             },
           ],

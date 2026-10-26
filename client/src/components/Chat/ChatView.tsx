@@ -31,7 +31,7 @@ import ChatForm from './Input/ChatForm';
 import { TraceSurface } from './Trace';
 import Landing from './Landing';
 import Header from './Header';
-import { cn } from '~/utils';
+import { cn, setDraft } from '~/utils';
 import store from '~/store';
 import HelpMount from './help/Mount';
 import HelpStarters from './help/Starters';
@@ -98,6 +98,15 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
     chatHelpers.conversation?.conversationId === conversationId &&
       chatHelpers.conversation?.gardenHelp === true,
   );
+  useEffect(() => {
+    if (!helpMode || !saveDrafts || !conversationId || isSubmitting) return;
+    // Following a document entry unloads the embedded native view. Complete
+    // its pending draft synchronously through the existing draft store, even
+    // when navigation beats autosave's short input debounce.
+    const save = () => setDraft({ id: conversationId, value: methods.getValues('text') });
+    window.addEventListener('pagehide', save);
+    return () => window.removeEventListener('pagehide', save);
+  }, [helpMode, saveDrafts, conversationId, isSubmitting, methods]);
   useEffect(() => {
     if (!helpMode) return;
     if (!isLoading) methods.setFocus('text');

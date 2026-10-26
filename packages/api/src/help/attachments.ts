@@ -29,7 +29,9 @@ async function capture(
     !file ||
     (file.tenantId && String(file.tenantId) !== String(req.user?.tenantId ?? '')) ||
     file.filename.length > 512 ||
-    file.type.length > 128
+    file.type.length > 128 ||
+    !Number.isSafeInteger(file.bytes) ||
+    file.bytes < 0
   )
     throw new Error('SOURCE_UNAVAILABLE');
   const metadata = JSON.stringify({

@@ -127,7 +127,11 @@ export const a: React.ElementType = memo(function MarkdownAnchor({ href, childre
   } = useMemo(() => {
     const ownedHandoffId = getOwnedChatDownloadId(href, user?.id);
     if (ownedHandoffId) {
-      return { file_id: ownedHandoffId, filename: typeof children === 'string' ? children : ownedHandoffId, filepath: '' };
+      return {
+        file_id: ownedHandoffId,
+        filename: typeof children === 'string' ? children : ownedHandoffId,
+        filepath: '',
+      };
     }
     const pattern = new RegExp(`(?:files|outputs)/${user?.id}/([^\\s]+)`);
     const match = href.match(pattern);
@@ -174,18 +178,14 @@ export const a: React.ElementType = memo(function MarkdownAnchor({ href, childre
   props.target = '_blank';
 
   const domainServerBaseUrl = `${apiBaseUrl()}/api`;
+  let downloadHref = href;
+  if (filepath) {
+    const filePath = filepath.startsWith('files/') ? filepath : `files/${filepath}`;
+    downloadHref = `${domainServerBaseUrl}/${filePath}`;
+  }
 
   return (
-    <a
-      href={
-        !filepath
-          ? href
-          : filepath.startsWith('files/')
-          ? `${domainServerBaseUrl}/${filepath}`
-          : `${domainServerBaseUrl}/files/${filepath}`
-      }
-      {...props}
-    >
+    <a href={downloadHref} {...props}>
       {children}
     </a>
   );

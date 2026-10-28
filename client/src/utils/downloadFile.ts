@@ -19,7 +19,8 @@ export function getOwnedChatDownloadId(href: string, userId?: string): string | 
       parts[3] !== 'download' ||
       parts[4] !== userId ||
       !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(parts[5])
-    ) return null;
+    )
+      return null;
     return parts[5];
   } catch {
     return null;

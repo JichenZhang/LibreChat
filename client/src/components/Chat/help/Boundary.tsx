@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
-import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@librechat/client';
-import { useLocalize } from '~/hooks';
+import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import useHelpMode from './useHelpMode';
+import { useLocalize } from '~/hooks';
 
 /** A display flag cannot relabel a work chat as the read-only Help conversation. */
 export default function HelpBoundary() {

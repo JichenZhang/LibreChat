@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@librechat/client';
+import { useQueryClient } from '@tanstack/react-query';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { QueryKeys, request } from 'librechat-data-provider';
-import { useAuthContext, useLocalize } from '~/hooks';
 import useHelpSession from '~/components/Chat/help/useHelpSession';
+import { useAuthContext, useLocalize } from '~/hooks';
 
 export default function HelpRoute() {
   const navigate = useNavigate();

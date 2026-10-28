@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@librechat/client';
 import { HelpCircle, GripVertical } from 'lucide-react';
 import type { TMessage } from 'librechat-data-provider';
+import useHelpSession, { useHelpSourceUpdate } from './useHelpSession';
+import HelpSource, { currentWorkSource } from './Source';
 import { useGetStartupConfig } from '~/data-provider';
 import { useAuthContext, useLocalize } from '~/hooks';
-import HelpSource, { currentWorkSource } from './Source';
-import useHelpSession, { useHelpSourceUpdate } from './useHelpSession';
 
 type Layout = { x: number; y: number; dock: 'left' | 'right' | null };
 const key = 'garden-help-layout-v1';

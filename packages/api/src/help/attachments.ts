@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { FileSources, HELP_PACKAGE_MAX_BYTES } from 'librechat-data-provider';
-import type { HelpEvidence } from 'librechat-data-provider';
 import type { HelpChatMethods } from '@librechat/data-schemas';
+import type { HelpEvidence } from 'librechat-data-provider';
 import type { ProvisionDeps } from '~/files/provision/service';
 import type { ServerRequest } from '~/types/http';
 import { resolveDownloadPath } from '~/storage/path';

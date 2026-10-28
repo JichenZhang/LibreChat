@@ -1,11 +1,9 @@
 import { z } from 'zod';
 import { readFile } from 'node:fs/promises';
-import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { interrupt } from '@langchain/langgraph';
 import { tool } from '@librechat/agents/langchain/tools';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { HELP_PACKAGE_MAX_BYTES, HELP_SUBMIT_TOOL, configSchema } from 'librechat-data-provider';
-import type { GenericTool } from '@librechat/agents';
-import type { ServerRequest } from '~/types/http';
 import type {
   HelpApprovedExport,
   HelpContext,
@@ -15,10 +13,12 @@ import type {
   TCustomConfig,
 } from 'librechat-data-provider';
 import type { HelpChatMethods, HelpSourceMessage } from '@librechat/data-schemas';
-import { buildToolApprovalPayload } from '~/agents/hitl/policy';
-import { helpDocumentSource, readHelpKnowledge } from './workspace';
-import { captureHelpAttachments, verifyHelpAttachment } from './attachments';
+import type { GenericTool } from '@librechat/agents';
 import type { HelpDependencies } from './attachments';
+import type { ServerRequest } from '~/types/http';
+import { captureHelpAttachments, verifyHelpAttachment } from './attachments';
+import { helpDocumentSource, readHelpKnowledge } from './workspace';
+import { buildToolApprovalPayload } from '~/agents/hitl/policy';
 
 type Config = NonNullable<z.output<typeof configSchema>['gardenHelp']>;
 type ActorRequest = Pick<ServerRequest, 'body' | 'config' | 'user'>;

@@ -252,6 +252,7 @@ jest.mock('@librechat/data-schemas', () => ({
 }));
 
 jest.mock('@librechat/api', () => ({
+  isGardenHelpRequest: jest.requireActual('@librechat/api').isGardenHelpRequest,
   getSteerRecoveryFailure: jest.requireActual(
     '../../../../../packages/api/src/stream/SteerRecovery',
   ).getSteerRecoveryFailure,

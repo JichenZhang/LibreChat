@@ -17,8 +17,8 @@ import type {
   AppConfig,
 } from '../types';
 import { ConversationMethods, createConversationMethods } from './conversation';
-import { createHelpChatMethods } from './help';
 import { tenantStorage, runAsSystem } from '~/config/tenantContext';
+import { createHelpChatMethods } from './help';
 import { createModels } from '../models';
 
 jest.mock('~/config/winston', () => ({

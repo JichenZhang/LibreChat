@@ -16,6 +16,7 @@ import { useMCPIconMap, useMCPServerNames } from '~/hooks/MCP';
 import { resolveToolCallPhase } from '~/utils/toolCallPhase';
 import { toolPanelSpacingClassName } from './disclosure';
 import { useToolCallIntent } from './Parts/intent';
+import HelpReceiptView from '../../help/Receipt';
 import { AttachmentGroup } from './Parts';
 import ToolCallInfo from './ToolCallInfo';
 import ProgressText from './ProgressText';
@@ -23,7 +24,6 @@ import { TOOL_ROW_CLASSES } from './rows';
 import { ToolAuthWarning } from './auth';
 import { firstErrorLine } from './live';
 import store from '~/store';
-import HelpReceiptView from '../../help/Receipt';
 
 export default function ToolCall({
   initialProgress = 0.1,

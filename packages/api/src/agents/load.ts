@@ -242,7 +242,7 @@ export async function loadAgent(
 ): Promise<Agent | null> {
   const { req, spec, agent_id, endpoint, model_parameters } = params;
   if (
-    req.config?.gardenHelp &&
+    req?.config?.gardenHelp &&
     req.user?.id &&
     req.body?.conversationId === helpConversationId(req.user.id)
   ) {

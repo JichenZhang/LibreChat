@@ -21,6 +21,9 @@ jest.mock('~/server/services/Files/Code/process', () => ({
 jest.mock('~/server/services/Files/process', () => ({
   saveBase64Image: jest.fn(),
 }));
+jest.mock('~/models', () => ({
+  findFileById: jest.fn(),
+}));
 
 const { ModelEndHandler, contextualizeModelUsage } = require('../callbacks');
 

@@ -1,11 +1,13 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import ChatView from '../ChatView';
 
 let mockConversation: Record<string, unknown> | null;
 
 jest.mock('react-router-dom', () => ({
   useParams: () => ({ conversationId: 'child-thread' }),
+  useLocation: () => ({ pathname: '/c/child-thread', search: '' }),
 }));
 
 jest.mock('recoil', () => ({
@@ -23,11 +25,13 @@ jest.mock('@librechat/client', () => ({
 }));
 
 jest.mock('librechat-data-provider', () => ({
+  QueryKeys: jest.requireActual('librechat-data-provider').QueryKeys,
   Constants: { NEW_CONVO: 'new', SEARCH: 'search' },
   buildTree: ({ messages }: { messages: unknown[] }) => messages,
 }));
 
 jest.mock('~/hooks', () => ({
+  useAuthContext: () => ({ user: null }),
   useAddedResponse: () => ({}),
   useResumeOnLoad: jest.fn(),
   useAdaptiveSSE: jest.fn(),
@@ -54,6 +58,7 @@ jest.mock('~/Providers', () => {
 });
 
 jest.mock('~/data-provider', () => ({
+  useGetStartupConfig: () => ({ data: undefined }),
   useGetMessagesByConvoId: () => ({
     data: [{ messageId: 'message-1' }],
     isLoading: false,
@@ -94,6 +99,13 @@ jest.mock('~/store', () => ({
 }));
 
 describe('ChatView child-thread execution identity', () => {
+  const renderChat = () =>
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ChatView />
+      </QueryClientProvider>,
+    );
+
   beforeEach(() => {
     jest.clearAllMocks();
   });
@@ -107,7 +119,7 @@ describe('ChatView child-thread execution identity', () => {
       },
     };
 
-    render(<ChatView />);
+    renderChat();
 
     expect(screen.queryByTestId('chat-form')).not.toBeInTheDocument();
     expect(screen.getByRole('note')).toHaveTextContent('com_ui_subagent_thread_read_only');
@@ -123,7 +135,7 @@ describe('ChatView child-thread execution identity', () => {
       },
     };
 
-    render(<ChatView />);
+    renderChat();
 
     expect(screen.queryByTestId('chat-form')).not.toBeInTheDocument();
     expect(screen.getByRole('note')).toHaveTextContent('com_ui_subagent_thread_read_only');

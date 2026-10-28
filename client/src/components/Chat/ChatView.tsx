@@ -22,21 +22,21 @@ import { QueuedTurnPortalProvider } from './Steering/QueuedTurnPortal';
 import ApprovalProvider from './Messages/Content/ApprovalContext';
 import ConversationStarters from './Input/ConversationStarters';
 import { pendingApprovalActionFamily } from './approval/state';
+import HelpSource, { hostedHelpSource } from './help/Source';
 import { useGetMessagesByConvoId } from '~/data-provider';
 import Footer, { useConfiguredFooter } from './Footer';
 import { AskAnswerHostProvider } from './ask/state';
 import MessagesView from './Messages/MessagesView';
+import useHelpMode from './help/useHelpMode';
+import HelpStarters from './help/Starters';
 import Presentation from './Presentation';
 import ChatForm from './Input/ChatForm';
 import { TraceSurface } from './Trace';
+import { cn, setDraft } from '~/utils';
+import HelpMount from './help/Mount';
 import Landing from './Landing';
 import Header from './Header';
-import { cn, setDraft } from '~/utils';
 import store from '~/store';
-import HelpMount from './help/Mount';
-import HelpStarters from './help/Starters';
-import HelpSource, { hostedHelpSource } from './help/Source';
-import useHelpMode from './help/useHelpMode';
 
 function LoadingSpinner() {
   return (

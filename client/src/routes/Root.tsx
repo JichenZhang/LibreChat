@@ -1,7 +1,5 @@
 import { useState, useEffect, useRef, useCallback, startTransition } from 'react';
 import { useRecoilValue } from 'recoil';
-import HelpBoundary from '~/components/Chat/help/Boundary';
-import useHelpMode from '~/components/Chat/help/useHelpMode';
 import { useMediaQuery } from '@librechat/client';
 import {
   UnifiedSidebar,
@@ -35,8 +33,10 @@ import KeyboardDeleteDialog from '~/components/Nav/KeyboardDeleteDialog';
 import { useUserTermsQuery, useGetStartupConfig } from '~/data-provider';
 import { MobileDrawerScrim } from '~/components/UnifiedSidebar/mobile';
 import useKeyboardShortcuts from '~/hooks/useKeyboardShortcuts';
+import useHelpMode from '~/components/Chat/help/useHelpMode';
 import useDrawerDismiss from '~/hooks/Nav/useDrawerDismiss';
 import useSidebarToggle from '~/hooks/Nav/useSidebarToggle';
+import HelpBoundary from '~/components/Chat/help/Boundary';
 import useSidebarState from '~/hooks/Nav/useSidebarState';
 import { TermsAndConditionsModal } from '~/components/ui';
 import useDrawerSwipe from '~/hooks/Nav/useDrawerSwipe';

@@ -15,8 +15,8 @@ import {
 import { buildApprovalPreview, buildApprovalPreviews } from '~/components/Chat/approval/preview';
 import ToolApproval from '~/components/Chat/Messages/Content/ToolApproval';
 import { useComposerOverlay } from '~/components/Chat/Input/overlay';
-import { useLocalize } from '~/hooks';
 import HelpApproval from '../help/Approval';
+import { useLocalize } from '~/hooks';
 
 function usePendingToolApproval(conversationId: string) {
   const pendingAction = useAtomValue(pendingApprovalActionFamily(conversationId));

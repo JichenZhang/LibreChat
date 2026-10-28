@@ -56,9 +56,13 @@ describe('downloadFile utilities', () => {
   it('recognizes only an owned same-origin native chat download', () => {
     const id = '7a03db0b-70a1-47d0-b2c1-d903bb6548a4';
     expect(getOwnedChatDownloadId(`/api/files/download/u1/${id}`, 'u1')).toBe(id);
-    expect(getOwnedChatDownloadId(`${window.location.origin}/api/files/download/u1/${id}`, 'u1')).toBe(id);
+    expect(
+      getOwnedChatDownloadId(`${window.location.origin}/api/files/download/u1/${id}`, 'u1'),
+    ).toBe(id);
     expect(getOwnedChatDownloadId(`/api/files/download/u2/${id}`, 'u1')).toBeNull();
-    expect(getOwnedChatDownloadId(`https://elsewhere.test/api/files/download/u1/${id}`, 'u1')).toBeNull();
+    expect(
+      getOwnedChatDownloadId(`https://elsewhere.test/api/files/download/u1/${id}`, 'u1'),
+    ).toBeNull();
     expect(getOwnedChatDownloadId(`sandbox:/api/files/download/u1/${id}`, 'u1')).toBeNull();
     expect(getOwnedChatDownloadId(`/api/files/download/u1/${id}?direct=true`, 'u1')).toBeNull();
   });

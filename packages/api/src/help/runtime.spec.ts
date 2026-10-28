@@ -1,15 +1,12 @@
-import { Readable } from 'node:stream';
-import { createHash } from 'node:crypto';
-import { helpDocumentSource, readHelpKnowledge } from './workspace';
 import express from 'express';
 import request from 'supertest';
-import { createGardenHelpRouter } from './routes';
-import { captureHelpAttachments, verifyHelpAttachment } from './attachments';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { Readable } from 'node:stream';
+import { createHash } from 'node:crypto';
 import { resolve, sep } from 'node:path';
-import { AIMessage } from '@langchain/core/messages';
 import { ToolNode } from '@librechat/agents';
+import { AIMessage } from '@langchain/core/messages';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import {
   Command,
   END,
@@ -21,14 +18,17 @@ import {
 import type { Agents, HelpApprovedExport, HelpPackage } from 'librechat-data-provider';
 import type { HelpChatMethods, HelpSourceMessage } from '@librechat/data-schemas';
 import type { ServerRequest } from '~/types/http';
-import { buildPendingAction } from '~/agents/hitl/policy';
-import { resolveToolApprovalResume } from '~/agents/hitl/resume';
 import {
   createGardenHelpRuntime,
   helpConversationId,
   messageEvidence,
   sealHelpPackage,
 } from './runtime';
+import { captureHelpAttachments, verifyHelpAttachment } from './attachments';
+import { helpDocumentSource, readHelpKnowledge } from './workspace';
+import { resolveToolApprovalResume } from '~/agents/hitl/resume';
+import { buildPendingAction } from '~/agents/hitl/policy';
+import { createGardenHelpRouter } from './routes';
 
 describe('Garden Help fixed native approval (R2; existing SDK ToolNode/MemorySaver fixture)', () => {
   let temporary: string;

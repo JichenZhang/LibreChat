@@ -18,6 +18,7 @@ jest.mock('~/hooks/AuthContext', () => ({
 }));
 
 jest.mock('~/data-provider', () => ({
+  useGetStartupConfig: () => ({ data: undefined }),
   useGetMessagesByConvoId: () => ({ data: null, isLoading: false, isFetching: false }),
 }));
 
@@ -27,6 +28,7 @@ jest.mock('~/data-provider', () => ({
  * up SSE, message trees, or full ChatRoute synchronization.
  */
 jest.mock('~/hooks', () => ({
+  useAuthContext: () => ({ isAuthenticated: false, user: null, roles: {} }),
   useLocalize: () => (key: string) => (key === 'com_ui_new_chat' ? 'New chat' : key),
   useChatHelpers: () => ({ conversation: mockConversation() }),
   useAddedResponse: () => ({}),

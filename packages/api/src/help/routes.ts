@@ -1,11 +1,10 @@
+import { z } from 'zod';
 import { Router } from 'express';
 import type { Request, Response, RequestHandler } from 'express';
 import type { AppConfig, IUser } from '@librechat/data-schemas';
-import { z } from 'zod';
-import { helpDocumentSource, readHelpKnowledge } from './workspace';
 import type { HelpChatMethods } from '@librechat/data-schemas';
-import type { ServerRequest } from '~/types/http';
 import type { HelpDependencies } from './attachments';
+import type { ServerRequest } from '~/types/http';
 import {
   captureHelpContext,
   createHelpTransport,
@@ -13,6 +12,7 @@ import {
   submitApprovedHelpExport,
   resolveGardenHelpConfig,
 } from './runtime';
+import { helpDocumentSource, readHelpKnowledge } from './workspace';
 
 type HelpRequest = Request & { user?: IUser; config?: AppConfig };
 const wrap =

@@ -1,52 +1,29 @@
-import path from 'path';
-import type { Model } from 'mongoose';
+import type { Model, Mongoose } from 'mongoose';
 import { applyRuntimeEnv } from './runtimeEnv';
 
 type TUser = { email: string; password: string };
 
-/**
- * Registers the backend's `~` alias in this process. Playwright's require hook only
- * maps it when `api/jsconfig.json` is the nearest path-config to the requiring file,
- * so a stray `api/tsconfig.json` would otherwise break every backend require here.
- */
-function registerBackendAlias() {
-  /* eslint-disable-next-line @typescript-eslint/no-require-imports */
-  require('module-alias')({
-    base: path.dirname(require.resolve('@librechat/backend/package.json')),
-  });
-}
-
 export default async function cleanupUser(user: TUser | TUser[]) {
   applyRuntimeEnv();
-  registerBackendAlias();
   /* eslint-disable @typescript-eslint/no-require-imports */
-  const { connectDb } = require('@librechat/backend/db/connect');
+  const { Mongoose: MongooseInstance } = require('mongoose');
+  const { createModels, createMethods } = require('@librechat/data-schemas');
   /* eslint-enable @typescript-eslint/no-require-imports */
+
+  if (!process.env.MONGO_URI) throw new Error('E2E cleanup requires MONGO_URI');
 
   const users = Array.isArray(user) ? user : [user];
   const failures: unknown[] = [];
-  let db: Awaited<ReturnType<typeof connectDb>> | undefined;
+  // A cleanup owns its connection and models. Reopening the backend singleton
+  // starts model.init() against its previously closed client before reconnecting.
+  const db: Mongoose = new MongooseInstance();
   try {
     console.log('🤖: global teardown has been started');
-    db = await connectDb();
+    await db.connect(process.env.MONGO_URI, { bufferCommands: false });
     console.log('🤖:  ✅  Connected to Database');
 
-    /* eslint-disable @typescript-eslint/no-require-imports */
-    const {
-      findUser,
-      deleteConvos,
-      deleteMessages,
-      deleteAllUserSessions,
-    } = require('@librechat/backend/models');
-    const {
-      User,
-      Balance,
-      Transaction,
-      AclEntry,
-      Token,
-      Group,
-    } = require('@librechat/backend/db/models');
-    /* eslint-enable @typescript-eslint/no-require-imports */
+    const { User, Balance, Transaction, AclEntry, Token, Group } = createModels(db);
+    const { findUser, deleteConvos, deleteMessages, deleteAllUserSessions } = createMethods(db);
 
     for (const { email } of users) {
       const foundUser = await findUser({ email });

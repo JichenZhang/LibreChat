@@ -131,8 +131,12 @@ export default function HelpMount({
   const close = () => {
     setOpened(false);
     setExpanded(false);
-    opener.current?.focus();
   };
+  useEffect(() => {
+    // The launcher is unmounted while open. Restore focus only after React
+    // has committed its return, rather than focusing a null ref in close().
+    if (started && !opened) opener.current?.focus();
+  }, [opened, started]);
   useEffect(() => {
     const receive = (event: MessageEvent) => {
       if (

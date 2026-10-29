@@ -17,12 +17,20 @@ test.beforeAll(async ({ baseURL }) => {
       'U1_GARDEN_HELP_ISOLATED;run=8659e84ef17b;port=25479'
   )
     throw new Error('Requires the explicitly owned U2 local fixture');
+  const { MONGO_URI } = JSON.parse(readFileSync(resolve(directory, 'native-mongo.json'), 'utf8'));
+  const uri = new URL(MONGO_URI);
+  if (uri.hostname !== '127.0.0.1' || uri.pathname !== '/GardenHelpU2Fixture')
+    throw new Error('Refusing non-fixture database');
+  const db = await mongoose.createConnection(MONGO_URI).asPromise();
   const context = await request.newContext({ baseURL });
   // The first native account is a local bootstrap; the employee remains a native USER.
   for (const [userEmail, name] of [
     ['garden-help-bootstrap@example.invalid', 'Local Bootstrap'],
     [email, 'U2 Employee'],
   ]) {
+    // Replaying this owned fixture must reuse its accounts, rather than
+    // exhausting native registration limits before any journey can run.
+    if (await db.collection('users').findOne({ email: userEmail })) continue;
     const response = await context.post('/api/auth/register', {
       data: { email: userEmail, name, password, confirm_password: password },
     });
@@ -30,11 +38,6 @@ test.beforeAll(async ({ baseURL }) => {
       throw new Error(`Local registration failed (${response.status()})`);
   }
   await context.dispose();
-  const { MONGO_URI } = JSON.parse(readFileSync(resolve(directory, 'native-mongo.json'), 'utf8'));
-  const uri = new URL(MONGO_URI);
-  if (uri.hostname !== '127.0.0.1' || uri.pathname !== '/GardenHelpU2Fixture')
-    throw new Error('Refusing non-fixture database');
-  const db = await mongoose.createConnection(MONGO_URI).asPromise();
   const result = await db
     .collection('users')
     .updateOne({ email }, { $set: { openidId: 'u2-alice', emailVerified: true } });
@@ -83,6 +86,12 @@ test('work chat and one native Help frame keep separate drafts; expand, edge Han
     frame.getByRole('button', { name: 'I am having trouble with Garden', exact: true }),
   ).toHaveCount(0);
   await input.fill('PRIVATE HELP DRAFT');
+  await input.press('Escape');
+  await expect(panel).not.toBeVisible();
+  const keyboardLauncher = page.getByRole('button', { name: 'Garden Help', exact: true });
+  await expect(keyboardLauncher).toBeFocused();
+  await keyboardLauncher.press('Enter');
+  await expect(input).toHaveValue('PRIVATE HELP DRAFT');
   await panel.getByRole('button', { name: 'Expand', exact: true }).click();
   expect(await preference()).toBe(ordinaryPreference);
   expect(await source.getAttribute('src')).toBe(sourceURL);

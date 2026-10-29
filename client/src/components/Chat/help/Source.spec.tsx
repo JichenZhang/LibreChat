@@ -140,3 +140,85 @@ test('a failed read or changed identity hides the previous private source until 
   client.clear();
   mockUser = { id: 'owner' };
 });
+
+test.each([
+  'https://help.garden.key-solution.com.cn/nas/',
+  'https://help.garden.key-solution.com.cn/nas/ · 第一步：登录 My Garden',
+])('document links use the captured canonical URL in %s', async (label) => {
+  const source = snapshot('NAS');
+  source.label = label;
+  const markdown = [
+    '[完成注册](/account/register/)',
+    '[找回密码说明](/account/recover/)',
+    '[Windows](windows/)',
+    '[账号](../account/)',
+    '[下方说明](#卡片没有显示已启用)',
+    '[My Garden](https://my.garden.key-solution.com.cn/)',
+    '[邮件](mailto:help@example.com)',
+    '[站点](//help.garden.key-solution.com.cn/)',
+    '[脚本](javascript:alert%281%29)',
+    '[数据](data:text/html,unsafe)',
+    '[无效](https://[invalid)',
+  ].join('\n\n');
+  source.evidence[0].text = markdown;
+  (request.get as jest.Mock).mockResolvedValue({ userId: 'owner', context: source });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, cacheTime: 0 } } });
+  const { unmount } = render(
+    <QueryClientProvider client={client}>
+      <HelpSource />
+    </QueryClientProvider>,
+  );
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('NAS'));
+  fireEvent.click(screen.getByText('com_ui_help_view_source'));
+  const destinations = {
+    完成注册: 'https://help.garden.key-solution.com.cn/account/register/',
+    找回密码说明: 'https://help.garden.key-solution.com.cn/account/recover/',
+    Windows: 'https://help.garden.key-solution.com.cn/nas/windows/',
+    账号: 'https://help.garden.key-solution.com.cn/account/',
+    下方说明:
+      'https://help.garden.key-solution.com.cn/nas/#%E5%8D%A1%E7%89%87%E6%B2%A1%E6%9C%89%E6%98%BE%E7%A4%BA%E5%B7%B2%E5%90%AF%E7%94%A8',
+    'My Garden': 'https://my.garden.key-solution.com.cn/',
+    邮件: 'mailto:help@example.com',
+    站点: 'https://help.garden.key-solution.com.cn/',
+  };
+  for (const [name, href] of Object.entries(destinations)) {
+    const link = await screen.findByRole('link', { name });
+    expect(link).toHaveAttribute('href', href);
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noreferrer');
+  }
+  for (const name of ['脚本', '数据', '无效']) {
+    expect(screen.getByText(name).closest('a')).not.toHaveAttribute('href');
+  }
+  expect(document.querySelector('pre')?.textContent).toBe(markdown);
+  expect(request.post).not.toHaveBeenCalled();
+  unmount();
+  client.clear();
+});
+
+test.each(['not a URL', 'javascript:alert(1)', 'mailto:help@example.com'])(
+  'an unusable canonical base %s never redirects relative links to Chat',
+  async (label) => {
+    const source = snapshot('NAS');
+    source.label = label;
+    source.evidence[0].text =
+      '[注册](/account/register/) [文档](windows/) [章节](#section) [工作台](https://my.garden.key-solution.com.cn/)';
+    (request.get as jest.Mock).mockResolvedValue({ userId: 'owner', context: source });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, cacheTime: 0 } } });
+    const { unmount } = render(
+      <QueryClientProvider client={client}>
+        <HelpSource />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('NAS'));
+    for (const name of ['注册', '文档', '章节']) {
+      expect(screen.getByText(name).closest('a')).not.toHaveAttribute('href');
+    }
+    expect(screen.getByText('工作台').closest('a')).toHaveAttribute(
+      'href',
+      'https://my.garden.key-solution.com.cn/',
+    );
+    unmount();
+    client.clear();
+  },
+);

@@ -52,6 +52,23 @@ export function hostedHelpSource() {
   }
 }
 
+function documentHref(href: string | undefined, label: string) {
+  // ReactMarkdown has already applied its default safe URL filter.
+  if (!href) return;
+  let base: URL | undefined;
+  try {
+    const url = new URL(label.split(' · ')[0]);
+    if (url.protocol === 'https:' || url.protocol === 'http:') base = url;
+  } catch {
+    // An invalid captured URL must never fall back to the Chat origin.
+  }
+  try {
+    return new URL(href, base).href;
+  } catch {
+    return undefined;
+  }
+}
+
 export default function HelpSource({
   work,
   active = true,
@@ -150,7 +167,11 @@ export default function HelpSource({
                         // Reviewing a source must not load remote images or execute HTML.
                         img: ({ alt }) => <span>{alt}</span>,
                         a: ({ children, href }) => (
-                          <a href={href} target="_blank" rel="noreferrer">
+                          <a
+                            href={documentHref(href, context.label)}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
                             {children}
                           </a>
                         ),

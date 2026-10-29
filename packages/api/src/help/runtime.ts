@@ -412,11 +412,17 @@ export async function createGardenHelpRuntime(
         // The native current user message owns the choice. A missing/stale model hint cannot
         // drop an explicit choice, resurrect an old vote or turn consent into a vote.
         const choice = row?.text.trim().split(/[，,。.!！\n]/, 1)[0] ?? '';
+        // A later explicit abstention applies to the whole turn, not just its first clause.
+        const abstains = /不投票|先空着|留空|(?:紧急程度|优先级)(?:我)?不确定/.test(
+          row?.text ?? '',
+        );
+        const levels = new Set(row?.text.toUpperCase().match(/P[0-3]/g));
         const match =
           row?.isCreatedByUser &&
           !row.truncated &&
+          !abstains &&
           !/[?？]|怎么|什么|是不是|是否|吗|呢/.test(choice) &&
-          new Set(row.text.toUpperCase().match(/P[0-3]/g)).size === 1
+          levels.size === 1
             ? choice.match(
                 /^(?:我(?:选|觉得|认为)|选|紧急程度(?:是|为)?|I (?:choose|think))?\s*(P[0-3])(?:[，,。.!！\s]|$)/i,
               )
@@ -425,6 +431,8 @@ export async function createGardenHelpRuntime(
         if (
           row?.isCreatedByUser &&
           !row.truncated &&
+          !abstains &&
+          levels.size === 0 &&
           /^(?:就)?按(?:你|AI)的建议\s*$/i.test(choice) &&
           row.parentMessageId &&
           branchIds.has(row.parentMessageId)

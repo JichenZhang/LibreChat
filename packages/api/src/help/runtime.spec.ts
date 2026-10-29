@@ -516,6 +516,31 @@ describe('Garden Help fixed native approval (R2; existing SDK ToolNode/MemorySav
   });
 
   test.each([
+    { text: '我选 P3。不，改成先空着，不投票，只提交反馈。', urgency: null },
+    { text: '就按你的建议。不过紧急程度我不确定，先空着，不投票。', urgency: null },
+    { text: '我选 P3。现在不投票，只提交反馈。', urgency: null },
+    { text: '我选 P3。不过优先级我不确定。', urgency: null },
+    { text: '我选 P3。不，改成 P1。', urgency: null },
+    { text: '就按你的建议。不过我选 P3。', urgency: null },
+    { text: '我选 P3。不过是否关联别人的问题我不确定，你来判断。', urgency: 'P3' },
+    { text: '就按你的建议。不过是否关联别人的问题我不确定，你来判断。', urgency: 'P2' },
+    { text: '就按你的建议。', urgency: 'P2' },
+  ])('whole current message controls the optional vote: $text', async ({ text, urgency }) => {
+    const f = await fixture({
+      currentMessageId: currentId,
+      messages: [message(currentId, text, true, priorId), message(priorId, 'AI 建议：P2。', false)],
+      input: { evidence_ids: [`${own}/${currentId}`], urgency_message_id: null },
+    });
+    expect(proposed(f).user_urgency).toBe(urgency);
+    expect(proposed(f).evidence.map((item) => item.source.id)).toEqual(
+      urgency === 'P2' ? [`${own}/${currentId}`, `${own}/${priorId}`] : [`${own}/${currentId}`],
+    );
+    expect(proposed(f).evidence[0].text).toBe(text);
+    expect(f.requests).toEqual([]);
+    expect(f.db.retainHelpExport).not.toHaveBeenCalled();
+  });
+
+  test.each([
     '我不确定优先级，先空着。我愿意把刚才的情况作为改进候选。',
     '同意共享',
     'P3 是什么意思？',

@@ -60,11 +60,14 @@ test('work chat and one native Help frame keep separate drafts; expand, edge Han
   const workURL = page.url();
   const main = page.getByRole('textbox', { name: 'Message input' });
   await main.fill('PRIVATE WORK DRAFT');
+  const preference = () => page.evaluate(() => localStorage.getItem('lastConversationSetup_0'));
+  const ordinaryPreference = await preference();
   await page.getByRole('button', { name: 'Garden Help', exact: true }).click();
   const panel = page.getByRole('region', { name: 'Garden Help', exact: true });
   const frame = page.frameLocator('iframe[title="Garden Help"]');
   const input = frame.getByRole('textbox', { name: 'Message input' });
   await expect(input).toBeVisible();
+  expect(await preference()).toBe(ordinaryPreference);
   await expect(panel.getByRole('region', { name: 'Source snapshot', exact: true })).toHaveCount(1);
   await expect(frame.getByRole('region', { name: 'Source snapshot', exact: true })).toHaveCount(0);
   const source = page.locator('iframe[title="Garden Help"]');
@@ -81,6 +84,7 @@ test('work chat and one native Help frame keep separate drafts; expand, edge Han
   ).toHaveCount(0);
   await input.fill('PRIVATE HELP DRAFT');
   await panel.getByRole('button', { name: 'Expand', exact: true }).click();
+  expect(await preference()).toBe(ordinaryPreference);
   expect(await source.getAttribute('src')).toBe(sourceURL);
   await expect(panel.getByRole('region', { name: 'Source snapshot', exact: true })).toHaveCount(1);
   await expect(frame.getByRole('region', { name: 'Source snapshot', exact: true })).toHaveCount(0);
@@ -139,6 +143,12 @@ test('work chat and one native Help frame keep separate drafts; expand, edge Han
   );
   await expect.poll(() => new URL(bounded.url()).pathname).toBe(expected.pathname);
   await bounded.close();
+  const ordinary = await page.context().newPage();
+  await ordinary.goto('/c/new');
+  await expect(ordinary.getByRole('button', { name: 'Select a model', exact: true })).toHaveText(
+    'Work fixture',
+  );
+  await ordinary.close();
 });
 
 test('native once approval copies verified source to real Help/PG, then own/shared views show a real maintainer update', async ({

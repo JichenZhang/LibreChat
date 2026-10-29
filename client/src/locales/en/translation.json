@@ -3101,5 +3101,12 @@
   "com_ui_help_metadata": "Name, type and size only",
   "com_ui_help_content": "Include original file content",
   "com_ui_help_title": "Garden Help · AI",
-  "com_ui_help_download": "Review this exact attachment"
+  "com_ui_help_download": "Review this exact attachment",
+  "com_ui_help_name": "Garden Help",
+  "com_ui_help_expand": "Expand",
+  "com_ui_help_collapse": "Collapse",
+  "com_ui_help_chat_source": "Selected chat background",
+  "com_ui_help_document_source": "Help document",
+  "com_ui_help_source_record": "Original text and version details",
+  "com_ui_help_tools_options": "Tools Options"
 }

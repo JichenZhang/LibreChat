@@ -98,6 +98,35 @@ describe('getDefaultModelSpec', () => {
     localStorage.clear();
   });
 
+  it('ignores only configured reserved Help residue, even after its server marker was lost', () => {
+    const help = createModelSpec('employee-support');
+    const work = createModelSpec('work', { softDefault: true });
+    const other = createModelSpec('ordinary-choice');
+    const config = {
+      ...createStartupConfig([help, work, other]),
+      gardenHelp: true,
+      gardenHelpPreset: help.name,
+    };
+    persistAppliedSpec(help);
+    expect(getDefaultModelSpec(config, fullEndpointsConfig)).toEqual({ softDefault: work });
+    persistAppliedSpec(other);
+    expect(getDefaultModelSpec(config, fullEndpointsConfig)).toEqual({ last: other });
+    // Sharing a provider/model is not sufficient to identify a Help pick.
+    persistEphemeralSelection(EModelEndpoint.openAI, help.preset.model!);
+    expect(getDefaultModelSpec(config, fullEndpointsConfig)).toBeUndefined();
+    expect(
+      getDefaultModelSpec(createStartupConfig([help, work]), fullEndpointsConfig),
+    ).toBeUndefined();
+  });
+
+  it('keeps a reserved Help entry out of the ordinary legacy first-spec fallback', () => {
+    const help = createModelSpec('employee-support');
+    const work = createModelSpec('work');
+    persistAppliedSpec(help);
+    const config = { ...createStartupConfig([help, work]), gardenHelpPreset: help.name };
+    expect(getDefaultModelSpec(config, fullEndpointsConfig)).toEqual({ default: work });
+  });
+
   it('uses the soft default for a fresh user with no prior selection', () => {
     const regularSpec = createModelSpec('regular-spec');
     const softSpec = createModelSpec('soft-spec', { softDefault: true });

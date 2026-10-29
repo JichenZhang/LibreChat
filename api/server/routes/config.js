@@ -298,6 +298,7 @@ router.get('/', async function (req, res) {
       socialLogins: appConfig?.registration?.socialLogins ?? defaultSocialLogins,
       interface: appConfig?.interfaceConfig,
       gardenHelp: appConfig?.gardenHelp != null,
+      gardenHelpPreset: appConfig?.gardenHelp?.preset,
       titleGenerationTiming: resolveTitleTiming({
         appConfig,
         endpoint: EModelEndpoint.agents,

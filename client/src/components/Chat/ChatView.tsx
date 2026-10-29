@@ -162,7 +162,7 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
     content = <MessagesView messagesTree={messagesTree} messages={messages} />;
   } else {
     content = helpMode ? (
-      <div className="p-4 text-base">{localize('com_ui_help_title')}</div>
+      <div className="p-4 text-base text-text-primary">{localize('com_ui_help_title')}</div>
     ) : (
       <Landing centerFormOnLanding={centerFormOnLanding} />
     );

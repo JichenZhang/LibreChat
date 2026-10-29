@@ -141,7 +141,7 @@ interface InitiatedTemplateResult {
 
 type StoredModelSelection = Pick<
   t.TConversation,
-  'model' | 'spec' | 'agent_id' | 'assistant_id'
+  'model' | 'spec' | 'agent_id' | 'assistant_id' | 'gardenHelp'
 > & { endpoint?: EModelEndpoint | string | null };
 
 function hasSelectionValue(value?: string | null): boolean {
@@ -427,8 +427,9 @@ export function getDefaultModelSpec(
     }
   | undefined {
   const { modelSpecs, interface: interfaceConfig } = startupConfig ?? {};
-  const { list, prioritize, addedEndpoints } = modelSpecs ?? {};
-  if (!list) {
+  const { list: configuredList, prioritize, addedEndpoints } = modelSpecs ?? {};
+  const list = configuredList?.filter((spec) => spec.name !== startupConfig?.gardenHelpPreset);
+  if (!list?.length) {
     return;
   }
 
@@ -438,9 +439,17 @@ export function getDefaultModelSpec(
   }
 
   const softDefaultSpec = list.find((spec) => spec.softDefault);
-  const lastSetup = parseStoredModelSelection(
+  const storedSetup = parseStoredModelSelection(
     localStorage.getItem(LocalStorageKeys.LAST_CONVO_SETUP + '_0'),
   );
+  // Older Help frames overwrote this shared preference. Its marker can be
+  // lost by a subsequent /c/new, so use the configured reserved spec as well.
+  const lastSetup =
+    storedSetup?.gardenHelp === true ||
+    (startupConfig?.gardenHelpPreset != null &&
+      storedSetup?.spec === startupConfig.gardenHelpPreset)
+      ? undefined
+      : storedSetup;
   const lastSpec = hasSelectionValue(lastSetup?.spec)
     ? list.find((spec) => spec.name === lastSetup?.spec)
     : undefined;

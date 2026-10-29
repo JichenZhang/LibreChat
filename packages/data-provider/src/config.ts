@@ -2512,6 +2512,7 @@ export type EndpointsDropParamsMap = Record<string, string[] | Record<string, st
 
 export type TStartupConfig = {
   gardenHelp?: boolean;
+  gardenHelpPreset?: string;
   appTitle: string;
   socialLogins?: string[];
   langfuseFanoutEnabled?: boolean;

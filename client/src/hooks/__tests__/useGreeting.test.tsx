@@ -17,6 +17,15 @@ jest.mock('../useLocalize', () => {
 const tuesdayAt = (hours: number, minutes = 0) => new Date(2024, 0, 9, hours, minutes, 0, 0);
 
 describe('useGreeting', () => {
+  it('has Chinese translations for every Help and scheduled greeting key', () => {
+    const en = jest.requireActual('~/locales/en/translation.json');
+    const zh = jest.requireActual('~/locales/zh-Hans/translation.json');
+    const keys = Object.keys(en).filter((key) => /^com_ui_(help_|greeting_)/.test(key));
+    for (const key of keys) {
+      expect(zh[key]).toEqual(expect.stringMatching(/[\u3400-\u9fff]/));
+      expect(zh[key].match(/{{\w+}}/g) ?? []).toEqual(en[key].match(/{{\w+}}/g) ?? []);
+    }
+  });
   beforeEach(() => {
     jest.useFakeTimers();
   });
@@ -25,10 +34,21 @@ describe('useGreeting', () => {
     jest.useRealTimers();
   });
 
-  it('resolves a localized greeting naming the user after mount', () => {
+  it('resolves a restrained localized greeting without repeating the account name', () => {
     jest.setSystemTime(tuesdayAt(9));
     const { result } = renderHook(() => useGreeting('Test User'));
-    expect(result.current).toContain('Test User');
+    expect(result.current).not.toContain('Test User');
+    expect(result.current).not.toBe('');
+  });
+
+  it('does not put an account email or an unbounded name into the welcome', () => {
+    const { result, rerender } = renderHook(({ name }) => useGreeting(name), {
+      initialProps: { name: 'employee@example.invalid' },
+    });
+    expect(result.current).not.toContain('@');
+    rerender({ name: 'A'.repeat(80) });
+    expect(result.current).not.toContain('AAA');
+    expect(result.current).not.toBe('');
   });
 
   it('omits the name when the user has none', () => {
@@ -57,7 +77,10 @@ describe('useGreeting', () => {
       seen.push(result.current);
     }
 
-    seen.forEach((greeting) => expect(greeting).toContain('Test User'));
+    seen.forEach((greeting) => {
+      expect(greeting).not.toContain('Test User');
+      expect(greeting).not.toBe('');
+    });
     /** Six slots a day: late night, dawn, morning, afternoon, evening, late night. */
     expect(new Set(seen).size).toBeGreaterThanOrEqual(4);
   });
@@ -73,7 +96,7 @@ describe('useGreeting', () => {
       document.dispatchEvent(new Event('visibilitychange'));
     });
     expect(result.current).not.toBe(morning);
-    expect(result.current).toContain('Test User');
+    expect(result.current).not.toContain('Test User');
     expect(jest.getTimerCount()).toBe(1);
   });
 

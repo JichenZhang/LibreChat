@@ -310,6 +310,30 @@ describe('GET /api/config', () => {
   });
 
   describe('authenticated (req.user exists)', () => {
+    it('exposes only the configured Help preset identity after login, including a nondefault name', async () => {
+      mockGetAppConfig.mockResolvedValue({
+        ...baseAppConfig,
+        gardenHelp: {
+          preset: 'employee-support',
+          toolSecretFile: '/private/secret',
+          serviceURL: 'http://private.test',
+        },
+      });
+      const response = await request(createApp(mockUser)).get('/api/config');
+      expect(response.body.gardenHelp).toBe(true);
+      expect(response.body.gardenHelpPreset).toBe('employee-support');
+      expect(JSON.stringify(response.body)).not.toContain('/private/secret');
+      expect(JSON.stringify(response.body)).not.toContain('http://private.test');
+      const anonymous = await request(createApp()).get('/api/config');
+      expect(anonymous.body).not.toHaveProperty('gardenHelpPreset');
+    });
+
+    it('omits the Help preset when Help is disabled', async () => {
+      mockGetAppConfig.mockResolvedValue(baseAppConfig);
+      const response = await request(createApp(mockUser)).get('/api/config');
+      expect(response.body.gardenHelp).toBe(false);
+      expect(response.body).not.toHaveProperty('gardenHelpPreset');
+    });
     it('should call getAppConfig with role, userId, and tenantId', async () => {
       mockGetAppConfig.mockResolvedValue(baseAppConfig);
       mockGetTenantId.mockReturnValue('fallback-tenant');

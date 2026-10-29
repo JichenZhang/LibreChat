@@ -9,11 +9,9 @@ import useLocalize from './useLocalize';
  * A single timer is armed for the next slot boundary, and the key is recalculated when
  * the tab becomes visible again in case the clock or timezone moved while it was hidden.
  */
-export default function useGreeting(name?: string, fallback = ''): string {
+export default function useGreeting(_name?: string, fallback = ''): string {
   const localize = useLocalize();
   const [greetingKey, setGreetingKey] = useState<TranslationKeys | null>(null);
-
-  const hasName = Boolean(name);
 
   useEffect(() => {
     let timeoutId: ReturnType<typeof setTimeout>;
@@ -21,7 +19,8 @@ export default function useGreeting(name?: string, fallback = ''): string {
     const update = () => {
       clearTimeout(timeoutId);
       const now = new Date();
-      setGreetingKey(getGreetingKey(now, hasName));
+      // Keep the welcome restrained; account names can be long or be emails.
+      setGreetingKey(getGreetingKey(now, false));
       timeoutId = setTimeout(update, Math.max(getMsUntilNextGreeting(now), 1000));
     };
 
@@ -40,11 +39,11 @@ export default function useGreeting(name?: string, fallback = ''): string {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', update);
     };
-  }, [hasName]);
+  }, []);
 
   if (greetingKey == null) {
     return fallback;
   }
 
-  return localize(greetingKey, { name });
+  return localize(greetingKey);
 }

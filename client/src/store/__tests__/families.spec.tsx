@@ -1,7 +1,7 @@
 /* eslint-disable i18next/no-literal-string */
 import React, { useRef } from 'react';
 import { RecoilRoot, useRecoilState } from 'recoil';
-import { Constants } from 'librechat-data-provider';
+import { Constants, LocalStorageKeys } from 'librechat-data-provider';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import {
   useNavigate,
@@ -73,6 +73,22 @@ function Driver() {
       <span data-testid="convo-id">{conversation?.conversationId ?? 'none'}</span>
       <span data-testid="convo-model">{conversation?.model ?? 'none'}</span>
       <button onClick={() => setConversation(draftConvo())}>seed</button>
+      <button
+        onClick={() =>
+          setConversation(
+            draftConvo({
+              conversationId: 'own-help',
+              gardenHelp: true,
+              spec: 'reserved-help',
+              model: 'help-model',
+              tools: ['help'],
+              createdAt: '2026-10-29',
+            }),
+          )
+        }
+      >
+        open-help
+      </button>
       <button onClick={editModel}>edit-model</button>
       <button onClick={chipSwitch}>chip-switch</button>
       <button onClick={sidebarSwitch}>sidebar-switch</button>
@@ -221,6 +237,29 @@ describe('conversationByIndex URL mirroring', () => {
 
     await waitFor(() => expect(screen.getByTestId('convo-id')).toHaveTextContent('saved-123'));
     expect(ops).toHaveLength(0);
+  });
+
+  it('keeps ordinary preferences intact when the dedicated Help conversation opens', async () => {
+    renderChat();
+    await seed();
+    const keys = [
+      LocalStorageKeys.LAST_SPEC,
+      LocalStorageKeys.LAST_MODEL,
+      LocalStorageKeys.LAST_TOOLS,
+      `${LocalStorageKeys.LAST_CONVO_SETUP}_0`,
+    ];
+    const before = keys.map((key) => localStorage.getItem(key));
+    fireEvent.click(screen.getByRole('button', { name: 'open-help' }));
+    await waitFor(() => expect(screen.getByTestId('convo-id')).toHaveTextContent('own-help'));
+    expect(keys.map((key) => localStorage.getItem(key))).toEqual(before);
+    expect(ops).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: 'seed' }));
+    fireEvent.click(screen.getByRole('button', { name: 'edit-model' }));
+    await waitFor(() =>
+      expect(
+        JSON.parse(localStorage.getItem(`${LocalStorageKeys.LAST_CONVO_SETUP}_0`)!).model,
+      ).toBe('edited-1'),
+    );
   });
 
   it('stays out of the URL entirely when params are disabled', async () => {

@@ -9,13 +9,14 @@ export default function HelpStarters({ focus }: { focus: () => void }) {
   const text = useWatch({ control, name: 'text' });
   if (text) return null;
   return (
-    <div className="flex flex-wrap gap-2 p-3">
+    <div className="garden-help-starters flex flex-wrap justify-center gap-1 px-3 py-2">
       {(
         ['com_ui_help_start_chat', 'com_ui_help_start_problem', 'com_ui_help_start_wish'] as const
       ).map((key) => (
         <Button
           key={key}
-          className="min-h-11 whitespace-normal"
+          variant="ghost"
+          className="min-h-11 whitespace-normal font-normal text-text-secondary"
           onClick={() => {
             setValue('text', localize(key));
             focus();

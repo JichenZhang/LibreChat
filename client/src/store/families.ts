@@ -79,37 +79,38 @@ const conversationByIndex = atomFamily<TConversation | null, string | number>({
           newValue,
           oldValue,
         });
-        if (newValue?.assistant_id != null && newValue.assistant_id) {
+        if (!newValue) return;
+        // A dedicated same-origin Help frame shares storage with work chats.
+        // It must never replace the user's ordinary model-selection intent.
+        if (newValue.gardenHelp !== true) {
+          if (newValue?.assistant_id != null && newValue.assistant_id) {
+            localStorage.setItem(
+              `${LocalStorageKeys.ASST_ID_PREFIX}${index}${newValue.endpoint}`,
+              newValue.assistant_id,
+            );
+          }
+          if (newValue?.agent_id != null && !isEphemeralAgentId(newValue.agent_id)) {
+            localStorage.setItem(`${LocalStorageKeys.AGENT_ID_PREFIX}${index}`, newValue.agent_id);
+          }
+          if (newValue?.spec != null && newValue.spec) {
+            localStorage.setItem(LocalStorageKeys.LAST_SPEC, newValue.spec);
+          }
+          if (newValue?.tools && Array.isArray(newValue.tools)) {
+            localStorage.setItem(
+              LocalStorageKeys.LAST_TOOLS,
+              JSON.stringify(newValue.tools.filter((el) => !!el)),
+            );
+          }
+
+          storeEndpointSettings(newValue);
+
+          const convoToStore = { ...newValue };
+          clearModelForNonEphemeralAgent(convoToStore);
           localStorage.setItem(
-            `${LocalStorageKeys.ASST_ID_PREFIX}${index}${newValue.endpoint}`,
-            newValue.assistant_id,
+            `${LocalStorageKeys.LAST_CONVO_SETUP}_${index}`,
+            JSON.stringify(convoToStore),
           );
         }
-        if (newValue?.agent_id != null && !isEphemeralAgentId(newValue.agent_id)) {
-          localStorage.setItem(`${LocalStorageKeys.AGENT_ID_PREFIX}${index}`, newValue.agent_id);
-        }
-        if (newValue?.spec != null && newValue.spec) {
-          localStorage.setItem(LocalStorageKeys.LAST_SPEC, newValue.spec);
-        }
-        if (newValue?.tools && Array.isArray(newValue.tools)) {
-          localStorage.setItem(
-            LocalStorageKeys.LAST_TOOLS,
-            JSON.stringify(newValue.tools.filter((el) => !!el)),
-          );
-        }
-
-        if (!newValue) {
-          return;
-        }
-
-        storeEndpointSettings(newValue);
-
-        const convoToStore = { ...newValue };
-        clearModelForNonEphemeralAgent(convoToStore);
-        localStorage.setItem(
-          `${LocalStorageKeys.LAST_CONVO_SETUP}_${index}`,
-          JSON.stringify(convoToStore),
-        );
 
         const disableParams = newValue.disableParams === true;
         const shouldUpdateParams =

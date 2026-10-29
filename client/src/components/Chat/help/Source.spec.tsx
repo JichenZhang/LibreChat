@@ -24,7 +24,7 @@ function snapshot(label: string): HelpContext {
   return {
     label,
     captured_at: label,
-    selection: { kind: 'document', id: 'nas/index' },
+    selection: { kind: 'document', id: 'nas/index', heading: label },
     evidence: [
       {
         kind: 'original_text',
@@ -62,6 +62,8 @@ test('one authoritative source follows A→B, clears without automatic recapture
   );
   const { rerender, unmount } = render(view());
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('WORK-A'));
+  screen.getAllByText('WORK-A selected body').forEach((body) => expect(body).not.toBeVisible());
+  expect(screen.getByText('WORK-A exact range')).not.toBeVisible();
   expect(request.post).not.toHaveBeenCalled();
   source = snapshot('DOCUMENT-B');
   fireEvent.click(screen.getByText(/com_ui_help_view_source/));

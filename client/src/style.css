@@ -2,6 +2,47 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Help source disclosure: readable text stays bounded beside the native chat. */
+.garden-help-source {
+  overflow-wrap: anywhere;
+}
+.garden-help-source summary::-webkit-details-marker {
+  display: none;
+}
+.garden-help-source-body {
+  max-height: min(16rem, 32dvh);
+}
+.garden-help-source-text {
+  line-height: 1.7;
+}
+.garden-help-source-text :is(h1, h2, h3, h4) {
+  margin: 0.5rem 0;
+  font-size: 1em;
+  font-weight: 600;
+}
+.garden-help-source-text :is(p, ul, ol, pre) {
+  margin: 0.5rem 0;
+}
+.garden-help-source-text ol {
+  list-style: decimal;
+  padding-left: 1.5rem;
+}
+.garden-help-source-text ul {
+  list-style: disc;
+  padding-left: 1.5rem;
+}
+.garden-help-source-text a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.garden-help-source-text pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.garden-help-launcher {
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.06);
+}
+
 .message-render {
   scroll-margin-top: 4rem;
 }

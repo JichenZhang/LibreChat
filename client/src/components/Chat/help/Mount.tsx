@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { HelpCircle } from 'lucide-react';
 import { Button } from '@librechat/client';
-import { HelpCircle, GripVertical } from 'lucide-react';
 import type { TMessage } from 'librechat-data-provider';
 import useHelpSession, { useHelpSourceUpdate } from './useHelpSession';
 import HelpSource, { currentWorkSource } from './Source';
@@ -16,14 +16,20 @@ const viewport = () => ({
 });
 function constrain(value?: Layout): Layout {
   const v = viewport();
-  let width = v.width < 640 ? 48 : 172;
+  let width = v.width < 640 ? 48 : 144;
   if (v.width < 640 && value?.dock) width = 44;
   let x = Math.max(8, Math.min(value?.x ?? v.width - width - 16, v.width - width - 8));
   if (value?.dock === 'left') x = 0;
   else if (value?.dock === 'right') x = v.width - width;
   return {
     x,
-    y: Math.max(8, Math.min(value?.y ?? v.height - (v.width < 640 ? 188 : 80), v.height - 80)),
+    y: Math.max(
+      8,
+      Math.min(
+        value?.y ?? v.height - (v.width < 640 ? 188 : 80),
+        v.height - (v.width < 640 ? 188 : 80),
+      ),
+    ),
     dock: value?.dock ?? null,
   };
 }
@@ -187,7 +193,7 @@ export default function HelpMount({
       drag.current = null;
     },
   };
-  let launcherWidth = mobile ? 48 : 128;
+  let launcherWidth = mobile ? 48 : 144;
   if (docked) launcherWidth = 44;
   return (
     <>
@@ -196,29 +202,18 @@ export default function HelpMount({
           className="fixed z-50 flex items-center"
           style={{ left: layout.x, top: view.top + layout.y }}
         >
-          {!mobile && (
-            <button
-              type="button"
-              className="min-h-11 min-w-11 touch-none rounded-l-xl border border-border-light bg-surface-primary"
-              aria-label={localize('com_ui_help_move')}
-              title={localize('com_ui_help_move')}
-              {...dragProps}
-            >
-              <GripVertical className="mx-auto size-4" />
-            </button>
-          )}
           <button
             ref={opener}
             type="button"
-            title="Garden Help"
-            aria-label="Garden Help"
+            title={localize('com_ui_help_move')}
+            aria-label={localize('com_ui_help_name')}
             style={{
               width: launcherWidth,
               height: docked ? 64 : 48,
               touchAction: 'none',
             }}
-            className="relative rounded-full border border-border-light bg-surface-primary text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-border-heavy"
-            {...(mobile ? dragProps : {})}
+            className="garden-help-launcher relative flex items-center justify-center gap-2 rounded-full border border-border-light bg-surface-primary text-sm text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-border-heavy"
+            {...dragProps}
             onClick={(event) => {
               if (event.detail !== 0 && suppressClick.current) {
                 suppressClick.current = false;
@@ -237,16 +232,16 @@ export default function HelpMount({
                 ?
               </span>
             )}
-            {!docked && mobile && <HelpCircle className="mx-auto size-6" />}
-            {!docked && !mobile && 'Garden Help'}
+            {!docked && <HelpCircle aria-hidden="true" className={mobile ? 'size-6' : 'size-4'} />}
+            {!docked && !mobile && localize('com_ui_help_name')}
           </button>
         </div>
       )}
       {started && (
         <section
-          aria-label="Garden Help"
+          aria-label={localize('com_ui_help_name')}
           hidden={!opened}
-          className="fixed z-50 flex flex-col overflow-hidden rounded-xl border border-border-light bg-surface-primary text-text-primary"
+          className="garden-help-panel fixed z-50 flex flex-col overflow-hidden rounded-xl border border-border-light bg-surface-primary text-text-primary"
           style={{
             display: opened ? 'flex' : 'none',
             ...(expanded
@@ -267,20 +262,31 @@ export default function HelpMount({
               </summary>
               <div className="absolute right-2 z-10 flex flex-col border border-border-light bg-surface-primary p-2">
                 <Button
+                  variant="ghost"
                   className="min-h-11"
-                  onClick={() => persist(constrain({ ...layout, dock: 'right' }))}
+                  onClick={(event) => {
+                    persist(constrain({ ...layout, dock: 'right' }));
+                    event.currentTarget.closest('details')?.removeAttribute('open');
+                  }}
                 >
                   {localize('com_ui_help_dock')}
                 </Button>
-                <Button className="min-h-11" onClick={() => persist(constrain())}>
+                <Button
+                  variant="ghost"
+                  className="min-h-11"
+                  onClick={(event) => {
+                    persist(constrain());
+                    event.currentTarget.closest('details')?.removeAttribute('open');
+                  }}
+                >
                   {localize('com_ui_help_reset')}
                 </Button>
               </div>
             </details>
-            <Button className="min-h-11" onClick={() => setExpanded(!expanded)}>
-              {localize(expanded ? 'com_ui_collapse' : 'com_ui_expand')}
+            <Button variant="ghost" className="min-h-11" onClick={() => setExpanded(!expanded)}>
+              {localize(expanded ? 'com_ui_help_collapse' : 'com_ui_help_expand')}
             </Button>
-            <Button className="min-h-11" onClick={close}>
+            <Button variant="ghost" className="min-h-11" onClick={close}>
               {localize('com_ui_close')}
             </Button>
           </header>

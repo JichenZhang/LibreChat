@@ -3,27 +3,26 @@ import { readFile } from 'node:fs/promises';
 import { interrupt } from '@langchain/langgraph';
 import { tool } from '@librechat/agents/langchain/tools';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
-import { HELP_PACKAGE_MAX_BYTES, HELP_SUBMIT_TOOL, configSchema } from 'librechat-data-provider';
+import { HELP_PACKAGE_MAX_BYTES, HELP_SUBMIT_TOOL } from 'librechat-data-provider';
 import type {
   HelpApprovedExport,
-  HelpContext,
   HelpSourceSelection,
   HelpEvidence,
   HelpPackage,
   HelpSeal,
-  TCustomConfig,
 } from 'librechat-data-provider';
-import type { HelpChatMethods, HelpSourceMessage } from '@librechat/data-schemas';
+import type { HelpChatMethods } from '@librechat/data-schemas';
 import type { GenericTool } from '@librechat/agents';
 import type { ResumeContentProtectionDependencies } from '~/agents/hitl/protection';
 import type { HelpDependencies } from './attachments';
 import type { ServerRequest } from '~/types/http';
+import type { Config } from './context';
+import { captureHelpSelection, hash, messageEvidence, resolveGardenHelpConfig } from './context';
 import { buildToolApprovalPayload } from '~/agents/hitl/policy';
-import { captureHelpAttachments } from './attachments';
-import { captureHelpSelection } from './context';
 import { readHelpKnowledge } from './workspace';
 
-type Config = NonNullable<z.output<typeof configSchema>['gardenHelp']>;
+export { captureHelpContext, messageEvidence, resolveGardenHelpConfig } from './context';
+
 type ActorRequest = Pick<ServerRequest, 'config' | 'user'> & {
   gardenHelpApprovedSources?: HelpEvidence[];
   gardenHelpApprovedParents?: HelpSeal['resume_parents'];
@@ -32,9 +31,6 @@ type ActorRequest = Pick<ServerRequest, 'config' | 'user'> & {
     gardenHelpContextMessageId?: string;
   };
 };
-export function resolveGardenHelpConfig(value: TCustomConfig['gardenHelp']): Config | undefined {
-  return configSchema.shape.gardenHelp.parse(value);
-}
 const level = z.enum(['P0', 'P1', 'P2', 'P3']).nullable();
 const bounded = (bytes: number) => z.string().refine((s) => Buffer.byteLength(s) <= bytes);
 const submitSchema = z
@@ -97,74 +93,11 @@ export function isGardenHelpRequest(req: ActorRequest): boolean {
     req.body?.conversationId === helpConversationId(req.user.id)
   );
 }
-const hash = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex');
 export function sealHelpPackage(value: HelpPackage): HelpSeal {
   const package_json = JSON.stringify(value);
   if (Buffer.byteLength(package_json, 'utf8') > HELP_PACKAGE_MAX_BYTES)
     throw new Error('TOO_LARGE');
   return { package_json, sha256: hash(package_json), submission_id: randomUUID() };
-}
-
-export function messageEvidence(
-  conversationId: string,
-  row: HelpSourceMessage,
-  now: string,
-): HelpEvidence {
-  return {
-    kind: 'original_text',
-    text: row.text,
-    source: {
-      kind: 'librechat_message',
-      id: `${conversationId}/${row.messageId}`,
-      revision: hash(JSON.stringify([row.text, row.updatedAt, row.parentMessageId])),
-      retrieved_at: now,
-      range: `text characters [0,${Array.from(row.text).length}); ${row.truncated ? 'remaining text excluded; ' : ''}attachment content excluded`,
-    },
-  };
-}
-
-export async function captureHelpContext(
-  db: HelpChatMethods,
-  userId: string,
-  source: {
-    conversationId: string;
-    messageIds: string[];
-    attachments?: { messageId: string; fileId: string; content: boolean }[];
-  },
-  req?: ServerRequest,
-  deps?: HelpDependencies,
-): Promise<HelpContext> {
-  if (!z.string().uuid().safeParse(source.conversationId).success || source.messageIds.length > 16)
-    throw new Error('INVALID_SOURCE');
-  const rows = await db.readHelpSources(userId, source.conversationId, source.messageIds);
-  const byId = new Map(rows.map((row) => [row.messageId, row]));
-  const ordered = source.messageIds.map((id) => byId.get(id));
-  if (
-    ordered.some((row) => row == null) ||
-    ordered.some((row, i) => i > 0 && row?.parentMessageId !== ordered[i - 1]?.messageId)
-  )
-    throw new Error('INVALID_SOURCE');
-  const now = new Date().toISOString();
-  const attachments =
-    source.attachments?.length && req ? await captureHelpAttachments(req, db, source, deps) : [];
-  const context = {
-    captured_at: now,
-    selection: {
-      kind: 'chat' as const,
-      conversationId: source.conversationId,
-      messageIds: [...source.messageIds],
-      attachments: source.attachments ?? [],
-    },
-    label:
-      'Selected chat branch; at most 16 messages, 16384 characters per message; attachment content only when explicitly selected',
-    evidence: [
-      ...rows.map((row) => messageEvidence(source.conversationId, row, now)),
-      ...attachments,
-    ],
-  };
-  if (Buffer.byteLength(JSON.stringify(context)) > HELP_PACKAGE_MAX_BYTES)
-    throw new Error('TOO_LARGE');
-  return context;
 }
 
 export interface GardenHelpRuntime {

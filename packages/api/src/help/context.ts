@@ -1,10 +1,88 @@
 import { z } from 'zod';
-import type { HelpContext, HelpSourceSelection } from 'librechat-data-provider';
-import type { HelpChatMethods } from '@librechat/data-schemas';
+import { createHash } from 'node:crypto';
+import { HELP_PACKAGE_MAX_BYTES, configSchema } from 'librechat-data-provider';
+import type {
+  HelpContext,
+  HelpSourceSelection,
+  HelpEvidence,
+  TCustomConfig,
+} from 'librechat-data-provider';
+import type { HelpChatMethods, HelpSourceMessage } from '@librechat/data-schemas';
 import type { HelpDependencies } from './attachments';
 import type { ServerRequest } from '~/types/http';
-import { captureHelpContext, resolveGardenHelpConfig } from './runtime';
 import { helpDocumentSource, readHelpKnowledge } from './workspace';
+import { captureHelpAttachments } from './attachments';
+
+export type Config = NonNullable<z.output<typeof configSchema>['gardenHelp']>;
+
+export function resolveGardenHelpConfig(value: TCustomConfig['gardenHelp']): Config | undefined {
+  return configSchema.shape.gardenHelp.parse(value);
+}
+
+export const hash = (value: string): string =>
+  createHash('sha256').update(value, 'utf8').digest('hex');
+
+export function messageEvidence(
+  conversationId: string,
+  row: HelpSourceMessage,
+  now: string,
+): HelpEvidence {
+  return {
+    kind: 'original_text',
+    text: row.text,
+    source: {
+      kind: 'librechat_message',
+      id: `${conversationId}/${row.messageId}`,
+      revision: hash(JSON.stringify([row.text, row.updatedAt, row.parentMessageId])),
+      retrieved_at: now,
+      range: `text characters [0,${Array.from(row.text).length}); ${row.truncated ? 'remaining text excluded; ' : ''}attachment content excluded`,
+    },
+  };
+}
+
+export async function captureHelpContext(
+  db: HelpChatMethods,
+  userId: string,
+  source: {
+    conversationId: string;
+    messageIds: string[];
+    attachments?: { messageId: string; fileId: string; content: boolean }[];
+  },
+  req?: ServerRequest,
+  deps?: HelpDependencies,
+): Promise<HelpContext> {
+  if (!z.string().uuid().safeParse(source.conversationId).success || source.messageIds.length > 16)
+    throw new Error('INVALID_SOURCE');
+  const rows = await db.readHelpSources(userId, source.conversationId, source.messageIds);
+  const byId = new Map(rows.map((row) => [row.messageId, row]));
+  const ordered = source.messageIds.map((id) => byId.get(id));
+  if (
+    ordered.some((row) => row == null) ||
+    ordered.some((row, i) => i > 0 && row?.parentMessageId !== ordered[i - 1]?.messageId)
+  )
+    throw new Error('INVALID_SOURCE');
+  const now = new Date().toISOString();
+  const attachments =
+    source.attachments?.length && req ? await captureHelpAttachments(req, db, source, deps) : [];
+  const context = {
+    captured_at: now,
+    selection: {
+      kind: 'chat' as const,
+      conversationId: source.conversationId,
+      messageIds: [...source.messageIds],
+      attachments: source.attachments ?? [],
+    },
+    label:
+      'Selected chat branch; at most 16 messages, 16384 characters per message; attachment content only when explicitly selected',
+    evidence: [
+      ...rows.map((row) => messageEvidence(source.conversationId, row, now)),
+      ...attachments,
+    ],
+  };
+  if (Buffer.byteLength(JSON.stringify(context)) > HELP_PACKAGE_MAX_BYTES)
+    throw new Error('TOO_LARGE');
+  return context;
+}
 
 const selectionSchema = z.discriminatedUnion('kind', [
   z

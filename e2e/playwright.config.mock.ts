@@ -338,7 +338,7 @@ export default defineConfig({
    * selected fixture, leaving whichever scenario ran last. Without this an
    * unfiltered entry point (`npm run e2e:mock`) does exactly that. */
   // Full Help journeys own a native/Go/PG fixture. Run with playwright.config.help.ts.
-  testIgnore: 'garden-help.spec.ts',
+  testIgnore: 'garden-help*.spec.ts',
   ...(modelFixtureRecording ? { testMatch: /model-replay[a-z-]*\.spec\.ts$/ } : {}),
   outputDir: 'specs/.test-results',
   fullyParallel: true,

@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { HelpCircle } from 'lucide-react';
 import { Button } from '@librechat/client';
-import type { TMessage } from 'librechat-data-provider';
-import useHelpSession, { useHelpSourceUpdate } from './useHelpSession';
-import HelpSource, { currentWorkSource } from './Source';
+import type { HelpSourceSelection, TMessage } from 'librechat-data-provider';
+import { stageHelpEntry, helpChannelId, refreshPendingHelpEntry } from './entry';
 import { useGetStartupConfig } from '~/data-provider';
 import { useAuthContext, useLocalize } from '~/hooks';
+import useHelpSession from './useHelpSession';
+import { currentWorkSource } from './Source';
+import { setDraft } from '~/utils';
 
 type Layout = { x: number; y: number; dock: 'left' | 'right' | null };
 const key = 'garden-help-layout-v1';
@@ -64,10 +66,10 @@ export default function HelpMount({
   const [layout, setLayout] = useState(storedLayout);
   const [opened, setOpened] = useState(false);
   const [started, setStarted] = useState(false);
-  const [expanded, setExpanded] = useState(false);
+  const [popupBlocked, setPopupBlocked] = useState(false);
   const [view, setView] = useState(viewport);
   const [ready, setReady] = useState(false);
-  const [sourceError, setSourceError] = useState(false);
+
   const opener = useRef<HTMLButtonElement>(null);
   const frame = useRef<HTMLIFrameElement>(null);
   const drag = useRef<{ x: number; y: number; start: Layout; moved: boolean } | null>(null);
@@ -76,29 +78,38 @@ export default function HelpMount({
   const actor = useRef(user?.id);
   actor.current = user?.id;
   const session = useHelpSession(started);
-  const initialUpdate = useHelpSourceUpdate();
-  const show = async () => {
+
+  const show = async (selection?: HelpSourceSelection | null) => {
     setStarted(true);
     setOpened(true);
     if (opening.current || !user?.id) return;
     opening.current = true;
     const userId = user.id;
-    const selected = currentWorkSource({ conversationId, leafId, messages });
+    stageHelpEntry(
+      userId,
+      selection === undefined
+        ? (currentWorkSource({ conversationId, leafId, messages }) ?? null)
+        : selection,
+    );
     try {
-      const result = await session.refetch({ cancelRefetch: false });
+      await session.refetch({ cancelRefetch: false });
       if (actor.current !== userId) return;
-      // Only the deliberate first launch's newly inserted chat takes an
-      // initial snapshot. A cleared/existing session is never recaptured.
-      if (result.data?.created && !result.data.context && selected)
-        await initialUpdate.mutateAsync({ userId, selection: selected });
-      setSourceError(false);
-    } catch {
-      if (actor.current === userId) setSourceError(true);
     } finally {
       opening.current = false;
       if (actor.current === userId) setReady(true);
     }
   };
+  useEffect(() => {
+    const open = (event: Event) => {
+      void show((event as CustomEvent<HelpSourceSelection>).detail);
+    };
+    window.addEventListener('garden-help-open', open);
+    return () => window.removeEventListener('garden-help-open', open);
+  });
+  useEffect(() => {
+    if (opened && user?.id)
+      refreshPendingHelpEntry(user.id, currentWorkSource({ conversationId, leafId, messages }));
+  }, [opened, user?.id, conversationId, leafId, messages]);
   const persist = (next: Layout) => {
     setLayout(next);
     try {
@@ -112,7 +123,6 @@ export default function HelpMount({
     setOpened(false);
     setStarted(false);
     setReady(false);
-    setSourceError(false);
   }, [user?.id]);
   useEffect(() => {
     const resize = () => {
@@ -130,7 +140,6 @@ export default function HelpMount({
   }, []);
   const close = () => {
     setOpened(false);
-    setExpanded(false);
   };
   useEffect(() => {
     // The launcher is unmounted while open. Restore focus only after React
@@ -156,6 +165,22 @@ export default function HelpMount({
     conversationId === session.data?.conversationId
   )
     return null;
+  const expand = () => {
+    const url = frame.current?.src;
+    if (!url) return;
+    const input = frame.current?.contentDocument?.querySelector<HTMLTextAreaElement>('textarea');
+    if (session.data && input) setDraft({ id: session.data.conversationId, value: input.value });
+    if (user?.id) helpChannelId(user.id);
+    const tab = window.open(url, '_blank');
+    if (!tab) {
+      setPopupBlocked(true);
+      return;
+    }
+    tab.opener = null;
+    tab.focus();
+    setPopupBlocked(false);
+    close();
+  };
   const mobile = view.width < 640;
   const docked = mobile && layout.dock != null;
   const onPointerDown = (event: React.PointerEvent<HTMLElement>) => {
@@ -248,14 +273,10 @@ export default function HelpMount({
           className="garden-help-panel fixed z-50 flex flex-col overflow-hidden rounded-xl border border-border-light bg-surface-primary text-text-primary"
           style={{
             display: opened ? 'flex' : 'none',
-            ...(expanded
-              ? { left: 8, right: 8, top: view.top + 8, height: view.height - 16 }
-              : {
-                  left: mobile ? 8 : Math.max(8, Math.min(layout.x, view.width - 428)),
-                  top: view.top + Math.max(8, Math.min(layout.y - 520, view.height - 640)),
-                  width: Math.min(420, view.width - 16),
-                  height: Math.min(620, view.height - 16),
-                }),
+            left: mobile ? 8 : Math.max(8, Math.min(layout.x, view.width - 428)),
+            top: view.top + Math.max(8, Math.min(layout.y - 520, view.height - 640)),
+            width: Math.min(420, view.width - 16),
+            height: Math.min(620, view.height - 16),
           }}
         >
           <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border-light px-3">
@@ -287,15 +308,14 @@ export default function HelpMount({
                 </Button>
               </div>
             </details>
-            <Button variant="ghost" className="min-h-11" onClick={() => setExpanded(!expanded)}>
-              {localize(expanded ? 'com_ui_help_collapse' : 'com_ui_help_expand')}
+            <Button variant="ghost" className="min-h-11" onClick={expand}>
+              {localize('com_ui_help_expand')}
             </Button>
             <Button variant="ghost" className="min-h-11" onClick={close}>
               {localize('com_ui_close')}
             </Button>
           </header>
-          <HelpSource work={{ conversationId, leafId, messages }} active={opened} />
-          {sourceError && <p role="alert">{localize('com_ui_help_source_error')}</p>}
+          {popupBlocked && <p role="alert">{localize('com_ui_help_popup_blocked')}</p>}
           {session.isError && (
             <div role="alert" className="p-4">
               <p>{localize('com_ui_help_unavailable')}</p>

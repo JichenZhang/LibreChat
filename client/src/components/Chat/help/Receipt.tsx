@@ -8,7 +8,7 @@ type Result = Partial<HelpReceipt> & {
   submission_id?: string;
   site_url?: string;
   cancelled?: boolean;
-  error?: { code: string };
+  error?: { code: string; retryable?: boolean };
 };
 export default function HelpReceiptView({ output }: { output?: string }) {
   const localize = useLocalize();
@@ -95,7 +95,7 @@ export default function HelpReceiptView({ output }: { output?: string }) {
           )}
         </>
       )}
-      {!saved && !knownFailure && initial.submission_id && (
+      {!saved && (!knownFailure || value.error?.retryable) && initial.submission_id && (
         <Button className="min-h-11" disabled={busy} onClick={check}>
           {localize('com_ui_help_check')}
         </Button>

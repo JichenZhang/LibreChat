@@ -27,6 +27,7 @@ import type { EToolResources } from './types/tools';
 import type { RefillIntervalUnit } from './balance';
 import type { SettingDefinition } from './generate';
 import type { TMinimalFeedback } from './feedback';
+import type { HelpSourceSelection } from './help';
 import type { ContentTypes } from './types/runs';
 import type { ProviderId } from './providers';
 import type { Agent } from './types/agents';
@@ -144,6 +145,8 @@ export type TEphemeralAgent = {
 
 export type TPayload = Partial<TMessage> &
   Partial<TEndpointOption> & {
+    gardenHelpSource?: HelpSourceSelection | null;
+    gardenHelpContextMessageId?: string;
     isContinued: boolean;
     isRegenerate?: boolean;
     /** Manual context compaction: summarize the branch up to `parentMessageId`
@@ -201,6 +204,8 @@ export type TEditedContent =
     };
 
 export type TSubmission = {
+  gardenHelpSource?: HelpSourceSelection | null;
+  gardenHelpContextMessageId?: string;
   userMessage: TMessage;
   isEdited?: boolean;
   isContinued?: boolean;

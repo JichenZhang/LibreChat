@@ -6,6 +6,7 @@ import { SettingsTabValues } from 'librechat-data-provider';
 import { Dialog, DialogPanel, DialogTitle, Transition, TransitionChild } from '@headlessui/react';
 import type { TDialogProps } from '~/common';
 import type { SettingsTab } from './types';
+import { useGetStartupConfig } from '~/data-provider';
 import { useSettingsContext } from './context';
 import { useLocalize } from '~/hooks';
 import Sidebar from './Sidebar';
@@ -16,6 +17,7 @@ import { cn } from '~/utils';
 export default function SettingsDialog({ open, onOpenChange }: TDialogProps) {
   const localize = useLocalize();
   const ctx = useSettingsContext();
+  const { data: startup } = useGetStartupConfig();
   const isSmallScreen = useMediaQuery('(max-width: 767px)');
   const [activeTab, setActiveTab] = useState<SettingsTab>(SettingsTabValues.GENERAL);
   const [query, setQuery] = useState('');
@@ -90,6 +92,21 @@ export default function SettingsDialog({ open, onOpenChange }: TDialogProps) {
                   <h2 className="text-lg font-medium text-text-primary">
                     {localize('com_nav_settings')}
                   </h2>
+                )}
+                {startup?.gardenHelp && (
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      onOpenChange(false);
+                      window.dispatchEvent(
+                        new CustomEvent('garden-help-open', {
+                          detail: { kind: 'settings', tab: effectiveTab },
+                        }),
+                      );
+                    }}
+                  >
+                    {localize('com_ui_help_name')}
+                  </Button>
                 )}
                 <Button
                   variant="ghost"

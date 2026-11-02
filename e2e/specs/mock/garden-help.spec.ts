@@ -1,49 +1,13 @@
-import { test, expect, request } from '@playwright/test';
-import { readFileSync } from 'node:fs';
+import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
-import mongoose from 'mongoose';
-import type { HelpSession } from 'librechat-data-provider';
-import { fetchJson, getAccessToken, sendMessageAndWaitForCompletion } from './helpers';
+import { setupHelpFixture } from './garden-help-fixture';
+import { sendMessageAndWaitForCompletion } from './helpers';
 
 const helpSite = 'http://127.0.0.1:25482';
 const email = 'garden-help-u2@example.invalid';
 const password = 'GardenHelpLocalFixture123!';
 test.describe.configure({ mode: 'serial' });
-test.beforeAll(async ({ baseURL }) => {
-  const directory = process.env.E2E_HELP_FIXTURE;
-  if (
-    !directory ||
-    readFileSync(resolve(directory, 'owner.txt'), 'utf8').trim() !==
-      'U1_GARDEN_HELP_ISOLATED;run=8659e84ef17b;port=25479'
-  )
-    throw new Error('Requires the explicitly owned U2 local fixture');
-  const { MONGO_URI } = JSON.parse(readFileSync(resolve(directory, 'native-mongo.json'), 'utf8'));
-  const uri = new URL(MONGO_URI);
-  if (uri.hostname !== '127.0.0.1' || uri.pathname !== '/GardenHelpU2Fixture')
-    throw new Error('Refusing non-fixture database');
-  const db = await mongoose.createConnection(MONGO_URI).asPromise();
-  const context = await request.newContext({ baseURL });
-  // The first native account is a local bootstrap; the employee remains a native USER.
-  for (const [userEmail, name] of [
-    ['garden-help-bootstrap@example.invalid', 'Local Bootstrap'],
-    [email, 'U2 Employee'],
-  ]) {
-    // Replaying this owned fixture must reuse its accounts, rather than
-    // exhausting native registration limits before any journey can run.
-    if (await db.collection('users').findOne({ email: userEmail })) continue;
-    const response = await context.post('/api/auth/register', {
-      data: { email: userEmail, name, password, confirm_password: password },
-    });
-    if (![200, 201, 400, 409, 422].includes(response.status()))
-      throw new Error(`Local registration failed (${response.status()})`);
-  }
-  await context.dispose();
-  const result = await db
-    .collection('users')
-    .updateOne({ email }, { $set: { openidId: 'u2-alice', emailVerified: true } });
-  if (result.matchedCount !== 1) throw new Error('Missing isolated employee');
-  await db.close();
-});
+test.beforeAll(async ({ baseURL }) => setupHelpFixture(baseURL));
 test.beforeEach(async ({ page }) => {
   await page.goto('/login');
   await page.getByLabel('Email', { exact: true }).fill(email);
@@ -71,7 +35,7 @@ test('work chat and one native Help frame keep separate drafts; expand, edge Han
   const input = frame.getByRole('textbox', { name: 'Message input' });
   await expect(input).toBeVisible();
   expect(await preference()).toBe(ordinaryPreference);
-  await expect(panel.getByRole('region', { name: 'Source snapshot', exact: true })).toHaveCount(1);
+  await expect(panel.getByRole('region', { name: 'Source snapshot', exact: true })).toHaveCount(0);
   await expect(frame.getByRole('region', { name: 'Source snapshot', exact: true })).toHaveCount(0);
   const source = page.locator('iframe[title="Garden Help"]');
   const sourceURL = await source.getAttribute('src');
@@ -92,10 +56,21 @@ test('work chat and one native Help frame keep separate drafts; expand, edge Han
   await expect(keyboardLauncher).toBeFocused();
   await keyboardLauncher.press('Enter');
   await expect(input).toHaveValue('PRIVATE HELP DRAFT');
+  const popupPromise = page.waitForEvent('popup');
   await panel.getByRole('button', { name: 'Expand', exact: true }).click();
+  const expanded = await popupPromise;
+  await expect(panel).not.toBeVisible();
+  await expect(expanded.getByRole('textbox', { name: 'Message input' })).toHaveValue(
+    'PRIVATE HELP DRAFT',
+  );
+  await expanded.getByRole('textbox', { name: 'Message input' }).fill('EXPANDED HELP DRAFT');
+  await expanded.close();
+  await page.getByRole('button', { name: 'Garden Help', exact: true }).click();
+  await expect(input).toHaveValue('EXPANDED HELP DRAFT');
+  await input.fill('PRIVATE HELP DRAFT');
   expect(await preference()).toBe(ordinaryPreference);
   expect(await source.getAttribute('src')).toBe(sourceURL);
-  await expect(panel.getByRole('region', { name: 'Source snapshot', exact: true })).toHaveCount(1);
+  await expect(panel.getByRole('region', { name: 'Source snapshot', exact: true })).toHaveCount(0);
   await expect(frame.getByRole('region', { name: 'Source snapshot', exact: true })).toHaveCount(0);
   await expect(main).toHaveValue('PRIVATE WORK DRAFT');
   await panel.getByRole('button', { name: 'Close', exact: true }).click();
@@ -130,7 +105,7 @@ test('work chat and one native Help frame keep separate drafts; expand, edge Han
   await panel.getByRole('button', { name: 'Reset position', exact: true }).click();
   await expect(input).toHaveValue('PRIVATE HELP DRAFT');
   await page.screenshot({
-    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'U4-native-narrow.png'),
+    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'H1-native-narrow.png'),
     fullPage: false,
   });
   const bounded = await page.context().newPage();
@@ -165,33 +140,23 @@ test('native once approval copies verified source to real Help/PG, then own/shar
   browser,
 }) => {
   await page.getByRole('button', { name: 'Garden Help', exact: true }).click();
-  const panel = page.getByRole('region', { name: 'Garden Help', exact: true });
   const frame = page.frameLocator('iframe[title="Garden Help"]');
   const input = frame.getByRole('textbox', { name: 'Message input' });
   await expect(input).toBeVisible();
-  const token = await getAccessToken(page);
-  const session = await fetchJson<{ context: { evidence: { source: { id: string } }[] } }>(
-    page,
-    '/api/garden/help/session',
-    token,
-  );
-  const evidenceId = session.context.evidence[0].source.id;
-  await input.fill(`E2E_GARDEN_HELP_SUBMIT skip urgency E2E_HELP_EVIDENCE=${evidenceId}`);
+  await input.fill('P2，E2E_GARDEN_HELP_SUBMIT synthetic own current message');
   await input.press('Enter');
   await expect(
     frame.getByText('Visible to all signed-in Garden users', { exact: true }),
   ).toBeVisible();
   await frame.getByText(/Submitted materials \(1\)/).click();
-  await expect(
-    frame.getByText(/U2 work goal is to preserve the sheet layout/).last(),
-  ).toBeVisible();
+  await expect(frame.getByText(/synthetic own current message/).last()).toBeVisible();
   await page.screenshot({
-    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'U4-native-approval.png'),
+    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'H1-native-approval.png'),
   });
   await frame.getByRole('button', { name: 'Submit to Garden Help', exact: true }).click();
   const ownLink = frame.getByRole('link', { name: 'My feedback', exact: true });
   await expect(ownLink).toBeVisible({ timeout: 30000 });
-  await page.screenshot({ path: resolve(process.env.E2E_HELP_EVIDENCE!, 'U4-native-receipt.png') });
+  await page.screenshot({ path: resolve(process.env.E2E_HELP_EVIDENCE!, 'H1-native-receipt.png') });
   const ownURL = (await ownLink.getAttribute('href'))!;
   const issueURL = (await frame
     .getByRole('link', { name: 'Shared issue', exact: true })
@@ -202,7 +167,7 @@ test('native once approval copies verified source to real Help/PG, then own/shar
   await expect(own.getByText('仅你和 Garden Help 维护者可见', { exact: true })).toBeVisible();
   await expect(own.getByText(/PRIVATE WORK DRAFT/)).toHaveCount(0);
   await own.getByText('原文片段 1', { exact: true }).click();
-  await expect(own.getByText(/U2 work goal is to preserve the sheet layout/)).toBeVisible();
+  await expect(own.getByText(/synthetic own current message/)).toBeVisible();
   const maintainer = await browser.newContext();
   await maintainer.addCookies([{ name: 'u2actor', value: 'u2-maintainer', url: helpSite }]);
   const manage = await maintainer.newPage();
@@ -229,7 +194,7 @@ test('native once approval copies verified source to real Help/PG, then own/shar
     404,
   );
   await shared.screenshot({
-    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'U4-shared-progress.png'),
+    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'H1-shared-progress.png'),
     fullPage: false,
   });
   await shared.getByLabel('你的紧急程度', { exact: true }).selectOption('P1');
@@ -251,7 +216,7 @@ test('native once approval copies verified source to real Help/PG, then own/shar
     true,
   );
   await shared.screenshot({
-    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'U4-participation-narrow.png'),
+    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'H1-participation-narrow.png'),
     fullPage: true,
   });
   const issueId = new URL(issueURL).searchParams.get('id');
@@ -261,7 +226,7 @@ test('native once approval copies verified source to real Help/PG, then own/shar
   await expect(manage.getByText(/u2-bob · P1/)).toBeVisible();
   await expect(manage.getByText('已授权的反馈摘要', { exact: true })).toBeVisible();
   await manage.screenshot({
-    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'U4-maintainer.png'),
+    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'H1-maintainer.png'),
     fullPage: true,
   });
   await own.goto(issueURL);
@@ -313,111 +278,5 @@ test('native once approval copies verified source to real Help/PG, then own/shar
   await expect(shared.getByRole('link', { name: '重新登录', exact: true })).toBeVisible();
   await maintainer.close();
   await bob.close();
-  // Extend this maintained journey at the actual native/source boundary.
-  const currentSource = () => fetchJson<HelpSession>(page, '/api/garden/help/session', token);
-  const beforeDocument = await currentSource();
-  await sendMessageAndWaitForCompletion(page, 'E2E_REPLY:LATER_WORK_NOT_AUTOMATICALLY_INCLUDED');
-  expect((await currentSource()).context).toEqual(beforeDocument.context);
-  await input.fill('DOCUMENT HELP DRAFT');
-  await own.goto(helpSite + '/nas/');
-  expect(
-    await own.getByRole('link', { name: '就本页求助', exact: true }).getAttribute('href'),
-  ).toMatch(/document=nas%2Findex&version=[a-f0-9]{64}/);
-  await own.getByRole('link', { name: '就此节求助', exact: true }).first().click();
-  const documentFrame = own.frameLocator('iframe[title="Garden Help"]');
-  const nativeSource = documentFrame.getByRole('region', { name: 'Source snapshot', exact: true });
-  await expect(documentFrame.getByRole('textbox', { name: 'Message input' })).toHaveValue(
-    'DOCUMENT HELP DRAFT',
-  );
-  const sectionSource = await currentSource();
-  expect(sectionSource.conversationId).toBe(beforeDocument.conversationId);
-  expect(sectionSource.context!.evidence[0].source.id).toBe('nas/index#section=0');
-  await nativeSource.getByText(/View source snapshot/).click();
-  await expect(nativeSource.getByRole('region', { name: 'Selected source details' })).toContainText(
-    sectionSource.context!.evidence[0].source.range,
-  );
-  await nativeSource.getByRole('button', { name: 'Update source snapshot', exact: true }).click();
-  await expect
-    .poll(async () => (await currentSource()).context!.captured_at)
-    .not.toBe(sectionSource.context!.captured_at);
-  expect((await currentSource()).context!.selection).toEqual(sectionSource.context!.selection);
-  await expect(documentFrame.getByRole('textbox', { name: 'Message input' })).toHaveValue(
-    'DOCUMENT HELP DRAFT',
-  );
-  await page.bringToFront();
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  const compactSource = panel.getByRole('region', { name: 'Source snapshot', exact: true });
-  await expect(compactSource.getByRole('status')).toHaveText(sectionSource.context!.label);
-  await expect(input).toHaveValue('DOCUMENT HELP DRAFT');
-
-  // History/direct entry has the same controls and unsent draft. Clearing in
-  // that view must remain clear in the already-open document/compact views.
-  const full = await page.context().newPage();
-  await full.goto('http://127.0.0.1:25483/c/' + encodeURIComponent(beforeDocument.conversationId));
-  const fullSource = full.getByRole('region', { name: 'Source snapshot', exact: true });
-  await expect(fullSource.getByRole('status')).toHaveText(sectionSource.context!.label);
-  await expect(full.getByRole('textbox', { name: 'Message input' })).toHaveValue(
-    'DOCUMENT HELP DRAFT',
-  );
-  await fullSource.getByRole('button', { name: 'Continue without source', exact: true }).click();
-  await expect(fullSource.getByText('No source included', { exact: true })).toBeVisible();
-  expect((await currentSource()).context).toBeNull();
-  await own.bringToFront();
-  await own.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await documentFrame.getByRole('textbox', { name: 'Message input' }).focus();
-  await expect(nativeSource.getByText('No source included', { exact: true })).toBeVisible();
-  await page.bringToFront();
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await expect(compactSource.getByText('No source included', { exact: true })).toBeVisible();
-  await panel.getByRole('button', { name: 'Close', exact: true }).click();
-  await page.reload();
-  await page.getByRole('button', { name: 'Garden Help', exact: true }).click();
-  await expect(compactSource.getByText('No source included', { exact: true })).toBeVisible();
-  expect((await currentSource()).context).toBeNull();
-  await expect(input).toHaveValue('DOCUMENT HELP DRAFT');
-  await compactSource
-    .getByRole('button', { name: 'Update from this work chat', exact: true })
-    .click();
-  await expect.poll(async () => (await currentSource()).context?.selection?.kind).toBe('chat');
-  expect(
-    (await currentSource()).context!.evidence.some((e) =>
-      e.text?.includes('LATER_WORK_NOT_AUTOMATICALLY_INCLUDED'),
-    ),
-  ).toBe(true);
-  await full.bringToFront();
-  await full.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await expect(fullSource.getByRole('status')).toContainText('Selected chat branch');
-  const explicitWork = (await currentSource()).context!.selection;
-  await fullSource.getByRole('button', { name: 'Update source snapshot', exact: true }).click();
-  await expect.poll(async () => (await currentSource()).context!.selection).toEqual(explicitWork);
-  await expect(full.getByRole('textbox', { name: 'Message input' })).toHaveValue(
-    'DOCUMENT HELP DRAFT',
-  );
-
-  // The other directory index and the original ordinary leaf both work.
-  await own.goto(helpSite + '/proxy/');
-  expect(
-    await own.getByRole('link', { name: '就本页求助', exact: true }).getAttribute('href'),
-  ).toMatch(/document=proxy%2Findex&version=[a-f0-9]{64}/);
-  await own.getByRole('link', { name: '就本页求助', exact: true }).click();
-  await expect(documentFrame.getByRole('textbox', { name: 'Message input' })).toHaveValue(
-    'DOCUMENT HELP DRAFT',
-  );
-  expect((await currentSource()).context!.evidence[0].source.id).toBe('proxy/index');
-  await own.goto(helpSite + '/nas/windows/');
-  await own.getByRole('link', { name: '就此节求助', exact: true }).first().click();
-  await expect(documentFrame.getByRole('textbox', { name: 'Message input' })).toHaveValue(
-    'DOCUMENT HELP DRAFT',
-  );
-  const leafSource = (await currentSource()).context!;
-  expect(leafSource.evidence[0].source.id).toBe('nas/windows#section=0');
-  expect(leafSource.evidence[0].text).toContain('## 第一步：打开 NAS 地址');
-  expect(leafSource.evidence[0].text).not.toContain('## 第二步');
-  await expect(nativeSource.getByRole('status')).toHaveText(leafSource.label);
-  await own.screenshot({
-    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'U4R2-document-source.png'),
-    fullPage: false,
-  });
-  await full.close();
   await own.close();
 });

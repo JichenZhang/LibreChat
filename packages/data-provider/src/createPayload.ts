@@ -50,6 +50,12 @@ export default function createPayload(submission: t.TSubmission) {
 
   const payload: t.TPayload = {
     ...userMessage,
+    ...(submission.gardenHelpContextMessageId && {
+      gardenHelpContextMessageId: submission.gardenHelpContextMessageId,
+    }),
+    ...(submission.gardenHelpSource !== undefined && {
+      gardenHelpSource: submission.gardenHelpSource,
+    }),
     ...endpointOption,
     endpoint,
     addedConvo,

@@ -193,7 +193,7 @@ export function createGardenHelpRouter(db: HelpChatMethods, deps?: HelpDependenc
         const chat = await db.readHelpChat(req.user!.id, helpConversationId(req.user!.id));
         const approved = chat?.gardenHelpExports?.find((item) => item.submission_id === id);
         const result = approved
-          ? await submitApprovedHelpExport(req, db, approved, deps)
+          ? await submitApprovedHelpExport(req, db, approved)
           : await (
               await createHelpTransport(
                 resolveGardenHelpConfig(req.config!.gardenHelp)!,

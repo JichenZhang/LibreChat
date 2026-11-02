@@ -1,4 +1,4 @@
-import { memo, useMemo, useEffect } from 'react';
+import { memo, useMemo, useEffect, useRef } from 'react';
 import { useAtomValue } from 'jotai';
 import { useRecoilValue } from 'recoil';
 import { useForm } from 'react-hook-form';
@@ -22,18 +22,20 @@ import { QueuedTurnPortalProvider } from './Steering/QueuedTurnPortal';
 import ApprovalProvider from './Messages/Content/ApprovalContext';
 import ConversationStarters from './Input/ConversationStarters';
 import { pendingApprovalActionFamily } from './approval/state';
-import HelpSource, { hostedHelpSource } from './help/Source';
 import { useGetMessagesByConvoId } from '~/data-provider';
 import Footer, { useConfiguredFooter } from './Footer';
 import { AskAnswerHostProvider } from './ask/state';
 import MessagesView from './Messages/MessagesView';
 import useHelpMode from './help/useHelpMode';
+import { helpChannelId } from './help/entry';
 import HelpStarters from './help/Starters';
 import Presentation from './Presentation';
 import ChatForm from './Input/ChatForm';
+import HelpSource from './help/Source';
 import { TraceSurface } from './Trace';
 import { cn, setDraft } from '~/utils';
 import HelpMount from './help/Mount';
+import { getDraft } from '~/utils';
 import Landing from './Landing';
 import Header from './Header';
 import store from '~/store';
@@ -75,6 +77,7 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
   const fileMap = useFileMapContext();
 
   const {
+    refetch: refetchMessages,
     data: messages = null,
     isLoading,
     isFetching,
@@ -118,6 +121,40 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
     window.addEventListener('keydown', escape);
     return () => window.removeEventListener('keydown', escape);
   }, [helpMode, isLoading, methods]);
+
+  const wasHelpSubmitting = useRef(false);
+  useEffect(() => {
+    if (helpMode && wasHelpSubmitting.current && !isSubmitting) void refetchMessages();
+    wasHelpSubmitting.current = helpMode && isSubmitting;
+  }, [helpMode, isSubmitting, refetchMessages]);
+  const receivingHelpDraft = useRef(false);
+  useEffect(() => {
+    const userId = helpSession.data?.userId;
+    if (!helpMode || !userId || !conversationId) return;
+    const channel = new BroadcastChannel('garden-help:' + userId + ':' + helpChannelId(userId));
+    channel.onmessage = (event: MessageEvent<{ type: string; text?: string }>) => {
+      if (event.data.type !== 'draft' || typeof event.data.text !== 'string') return;
+      receivingHelpDraft.current = true;
+      methods.setValue('text', event.data.text);
+      receivingHelpDraft.current = false;
+    };
+    const watch = methods.watch((value) => {
+      if (!receivingHelpDraft.current)
+        channel.postMessage({ type: 'draft', text: value.text ?? '' });
+    });
+    const refresh = () => {
+      if (isSubmitting) return;
+      void refetchMessages();
+      const draft = getDraft(conversationId);
+      if (draft !== undefined) methods.setValue('text', draft ?? '');
+    };
+    window.addEventListener('focus', refresh);
+    return () => {
+      watch.unsubscribe();
+      channel.close();
+      window.removeEventListener('focus', refresh);
+    };
+  }, [helpMode, helpSession.data?.userId, conversationId, isSubmitting, methods, refetchMessages]);
   const addedChatHelpers = useAddedResponse();
 
   const activeConversation =
@@ -203,7 +240,6 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
                         readOnly={isSubagentThreadReadOnly}
                       />
                     )}
-                    {helpMode && !hostedHelpSource() && <HelpSource />}
                     <>
                       <div
                         className={cn(
@@ -222,6 +258,7 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
                         )}
                       >
                         {content}
+                        {helpMode && <HelpSource messages={messages} />}
                         {/* Named + opaque so a view transition (the ask_user_question
                         popover ⇄ chat-card morph) paints the whole composer band
                         over the travelling card instead of letting it show

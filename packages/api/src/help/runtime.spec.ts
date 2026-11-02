@@ -22,6 +22,8 @@ import {
   createGardenHelpRuntime,
   helpConversationId,
   messageEvidence,
+  retainHelpApproval,
+  helpResumeSources,
   sealHelpPackage,
 } from './runtime';
 import { captureHelpAttachments, verifyHelpAttachment } from './attachments';
@@ -66,6 +68,15 @@ describe('Garden Help fixed native approval (R2; existing SDK ToolNode/MemorySav
     const conversationId = helpConversationId(userId);
     let retained: HelpApprovedExport | undefined;
     const db: HelpChatMethods = {
+      readHelpTurnContext: jest.fn(async () => ({
+        context: {
+          label: 'selected branch',
+          captured_at: new Date().toISOString(),
+          evidence: [evidence],
+        },
+        status: 'captured' as const,
+      })),
+      bindHelpTurnContext: jest.fn(async (_user, _chat, _message, value) => value),
       ensureHelpChat: jest.fn(),
       replaceHelpContext: jest.fn(),
       releaseHelpExport: jest.fn(),
@@ -79,13 +90,13 @@ describe('Garden Help fixed native approval (R2; existing SDK ToolNode/MemorySav
         },
         gardenHelpExports: retained ? [retained] : [],
       })),
-      readHelpSources: jest.fn(async (user, convo, ids) =>
-        user !== userId
-          ? []
-          : (convo === sourceId ? [row] : convo === conversationId ? messages : []).filter(
-              (message) => ids.includes(message.messageId),
-            ),
-      ),
+      readHelpSources: jest.fn(async (user, convo, ids) => {
+        if (user !== userId) return [];
+        let available: HelpSourceMessage[] = [];
+        if (convo === sourceId) available = [row];
+        else if (convo === conversationId) available = messages;
+        return available.filter((message) => ids.includes(message.messageId));
+      }),
       retainHelpExport: jest.fn(async (_user, _convo, value) => {
         retained = value;
         return true;
@@ -193,9 +204,108 @@ describe('Garden Help fixed native approval (R2; existing SDK ToolNode/MemorySav
           action_requests: [],
           review_configs: [],
         } as unknown as Agents.ToolApprovalInterruptPayload);
-    return { graph, config, payload, row, db, requests, snapshot, runtime, conversationId };
+    return {
+      graph,
+      config,
+      payload,
+      row,
+      db,
+      requests,
+      snapshot,
+      runtime,
+      conversationId,
+      req,
+      saver,
+    };
   }
 
+  test('native host retention lets a rebuilt paused graph save the original seal even after source deletion', async () => {
+    const f = await fixture();
+    const accepted = resolveToolApprovalResume(
+      f.payload,
+      [{ tool_call_id: 'help-call', decision: 'approve', scope: 'once' }],
+      { actionId: 'host-action' },
+    );
+    if (!('resumeValue' in accepted)) throw new Error('Expected approval');
+    await retainHelpApproval(f.req, f.db, accepted.resumeValue, 'user-choice');
+    const copies = helpResumeSources(f.req, {
+      getMessages: jest.fn(async (_filter: { conversationId: string; user?: string }) => []),
+    });
+    expect(
+      await copies.getMessages({ user: f.req.user!.id, conversationId: f.conversationId }),
+    ).toEqual([{ messageId: 'user-choice', text: 'P1', isCreatedByUser: true, role: 'user' }]);
+    expect(
+      await copies.getMessages({ user: 'other-user', conversationId: f.conversationId }),
+    ).toEqual([]);
+    expect(
+      await copies.getMessages({ user: f.req.user!.id, conversationId: 'other-conversation' }),
+    ).toEqual([]);
+    jest.mocked(f.db.readHelpSources).mockResolvedValue([]);
+    const runtime = (await createGardenHelpRuntime(f.req, f.db))!;
+    const rebuilt = new StateGraph(MessagesAnnotation)
+      .addNode(
+        'tools',
+        new ToolNode<typeof MessagesAnnotation.State>({
+          tools: runtime.tools,
+          executingAgentId: 'help-agent',
+          toolCallStepIds: new Map([['help-call', 'step-help']]),
+        }),
+      )
+      .addEdge(START, 'tools')
+      .addEdge('tools', END)
+      .compile({ checkpointer: f.saver });
+    await rebuilt.invoke(new Command({ resume: accepted.resumeValue }), f.config);
+    expect(f.requests.map((r) => r.name)).toEqual([
+      'help_submission_status',
+      'help_submit_feedback',
+    ]);
+    expect(f.requests[1].packageJSON).toContain(
+      (f.payload.action_requests[0].arguments as unknown as HelpApprovedExport).package_json,
+    );
+  });
+  test('an unknown transport result retains the confirmed copy and stable submission for retry', async () => {
+    const f = await fixture();
+    const accepted = resolveToolApprovalResume(
+      f.payload,
+      [{ tool_call_id: 'help-call', decision: 'approve', scope: 'once' }],
+      { actionId: 'retry-action' },
+    );
+    if (!('resumeValue' in accepted)) throw new Error('Expected approval');
+    jest.mocked(global.fetch).mockRejectedValue(new Error('local transport unavailable'));
+    const result = await f.graph.invoke(new Command({ resume: accepted.resumeValue }), f.config);
+    expect(String(result.messages[result.messages.length - 1]?.content)).toContain(
+      'RESULT_UNKNOWN',
+    );
+    const chat = await f.db.readHelpChat(f.req.user!.id, f.conversationId);
+    expect(chat?.gardenHelpExports?.[0]?.package_json).toBe(
+      (f.payload.action_requests[0].arguments as unknown as HelpApprovedExport).package_json,
+    );
+    expect(f.db.releaseHelpExport).not.toHaveBeenCalled();
+  });
+  test('a continuation uses its own tab message binding instead of another tab or old global context', async () => {
+    const f = await fixture();
+    const context = {
+      label: 'TAB-A SETTINGS',
+      captured_at: new Date().toISOString(),
+      evidence: [],
+    };
+    f.db.readHelpTurnContext = jest.fn(async (_user, _chat, ids) =>
+      ids[0] === 'tab-A-message' ? { context, status: 'captured' as const } : null,
+    );
+    const runtime = await createGardenHelpRuntime(
+      { ...f.req, body: { ...f.req.body, gardenHelpContextMessageId: 'tab-A-message' } },
+      f.db,
+      'next-message',
+    );
+    expect(runtime?.instructions).toContain('TAB-A SETTINGS');
+    expect(runtime?.instructions).not.toContain('PRIVATE ORIGINAL');
+    expect(f.db.bindHelpTurnContext).toHaveBeenCalledWith(
+      f.req.user!.id,
+      f.conversationId,
+      'next-message',
+      { context, status: 'captured', origin_message_id: f.req.body.messageId },
+    );
+  });
   test('a direct graph tool pauses with no generic HITL policy; only exact once approval exports trusted actor/material', async () => {
     const f = await fixture();
     expect(f.requests).toEqual([]);
@@ -226,7 +336,7 @@ describe('Garden Help fixed native approval (R2; existing SDK ToolNode/MemorySav
     expect(f.requests[1].packageJSON).toContain(`"package":${proposal.package_json}`);
     expect(f.db.releaseHelpExport).toHaveBeenCalledTimes(1);
   });
-  test('refusal creates no Help draft; changed source cannot be exported after approval', async () => {
+  test('refusal creates no Help draft; original edits cannot replace or reject an approved historical copy', async () => {
     const refused = await fixture();
     await refused.graph.invoke(
       new Command({ resume: { 'help-call': { type: 'reject' } } }),
@@ -247,10 +357,13 @@ describe('Garden Help fixed native approval (R2; existing SDK ToolNode/MemorySav
       new Command({ resume: accepted.resumeValue }),
       changed.config,
     );
-    expect(changed.requests.map((r) => r.name)).toEqual(['help_submission_status']);
-    expect(String(result.messages[result.messages.length - 1]?.content)).toContain(
-      'SOURCE_CHANGED',
-    );
+    expect(changed.requests.map((r) => r.name)).toEqual([
+      'help_submission_status',
+      'help_submit_feedback',
+    ]);
+    expect(changed.requests[1].packageJSON).toContain('PRIVATE ORIGINAL');
+    expect(changed.requests[1].packageJSON).not.toContain('NEW UNAPPROVED CONTENT');
+    expect(String(result.messages[result.messages.length - 1]?.content)).toContain('feedback_id');
   });
   // Exact captured Responses arguments at fork ca9e649; synthetic IDs are deliberately not repaired.
   const capturedSubmissions = [

@@ -1,4 +1,6 @@
 {
+  "com_ui_help_popup_blocked": "Allow pop-ups to open Help in a new tab. Your draft is still here.",
+  "com_ui_help_message_context": "Background for this message",
   "com_ui_background_tasks": "Background tasks",
   "com_ui_background_tasks_cancel_disabled": "Stopping background tools is not enabled on this server",
   "com_ui_background_tasks_checked": "Checked background tasks",

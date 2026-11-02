@@ -37,6 +37,11 @@ import {
   getRouteChatProjectId,
   stripStreamedIndexStamps,
 } from '~/utils';
+import {
+  pendingHelpEntry,
+  consumeHelpEntry,
+  helpContextMessageId,
+} from '~/components/Chat/help/entry';
 import useFocusRegeneratedResponse from '~/hooks/Chat/useFocusRegeneratedResponse';
 import useGetConversation from '~/hooks/Conversations/useGetConversation';
 import { withSubmittedCodeDecision } from '~/hooks/Agents/codeDecision';
@@ -747,7 +752,15 @@ export default function useChatFunctions({
     const regenerateMessages = regenerateShaped ? [...currentMessages] : undefined;
 
     logger.log('message_state', initialResponse);
+    const helpSend =
+      conversation?.gardenHelp === true || new URLSearchParams(location.search).has('gardenHelp');
     const submission: TSubmission = {
+      ...(helpSend && user?.id && !regenerateShaped && !isContinued
+        ? {
+            gardenHelpSource: pendingHelpEntry(user.id),
+            gardenHelpContextMessageId: helpContextMessageId(user.id),
+          }
+        : {}),
       conversation: {
         ...conversation,
         ...(chatProjectId ? { chatProjectId } : {}),
@@ -799,6 +812,7 @@ export default function useChatFunctions({
     );
     setSubmissionStart(Date.now());
     setSubmission(submission);
+    if (helpSend && user?.id) consumeHelpEntry(user.id, currentMsg.messageId);
     logger.dir('message_stream', submission, { depth: null });
   };
 

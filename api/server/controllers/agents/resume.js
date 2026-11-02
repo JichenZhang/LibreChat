@@ -14,6 +14,8 @@ const {
   GENERATION_RECOVERY_FAILED_ERROR,
   isPendingActionStale,
   resolveToolApprovalResume,
+  retainHelpApproval,
+  helpResumeSources,
   resolveAskUserQuestionResume,
   buildResolvedAskUserQuestion,
   appendResolvedAskUserQuestion,
@@ -79,6 +81,7 @@ const {
   markAgentEventActorDetachedActionRunning,
   settleAgentEventActorDetachedAction,
   appendConvoMessageReference,
+  retainHelpExport,
 } = require('~/models');
 const {
   acquireEventChildGenerationLease,
@@ -1091,6 +1094,12 @@ const ResumeAgentController = async (req, res, next, initializeClient, addTitle)
             },
           }
         : pendingAction;
+    await retainHelpApproval(
+      req,
+      { retainHelpExport },
+      mapped.resumeValue,
+      job.metadata.userMessage?.messageId,
+    );
     preparedContent = await preflightResumeContent(
       {
         appConfig: req.config,
@@ -1107,7 +1116,7 @@ const ResumeAgentController = async (req, res, next, initializeClient, addTitle)
         checkpointNamespace,
         resolvedAddedAgent: req.resolvedAddedAgent,
       },
-      resumeContentProtectionDependencies,
+      helpResumeSources(req, resumeContentProtectionDependencies),
     );
   } catch (err) {
     logger.warn(

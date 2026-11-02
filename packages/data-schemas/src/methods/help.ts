@@ -1,4 +1,4 @@
-import type { HelpApprovedExport, HelpContext } from 'librechat-data-provider';
+import type { HelpApprovedExport, HelpContext, HelpTurnContext } from 'librechat-data-provider';
 import type { Model } from 'mongoose';
 import type { IConversation, IMongoFile } from '~/types';
 
@@ -11,6 +11,17 @@ export interface HelpSourceMessage {
   truncated: boolean;
 }
 export interface HelpChatMethods {
+  readHelpTurnContext(
+    user: string,
+    conversationId: string,
+    ids: string[],
+  ): Promise<HelpTurnContext | null>;
+  bindHelpTurnContext(
+    user: string,
+    conversationId: string,
+    messageId: string,
+    value: HelpTurnContext,
+  ): Promise<HelpTurnContext>;
   ensureHelpChat(
     user: string,
     conversationId: string,
@@ -53,6 +64,50 @@ export interface HelpChatMethods {
 export function createHelpChatMethods(mongoose: typeof import('mongoose')): HelpChatMethods {
   const conversations = () => mongoose.models.Conversation as Model<IConversation>;
   return {
+    async readHelpTurnContext(user, conversationId, ids) {
+      const rows = await mongoose.models.Message.find({
+        user,
+        conversationId,
+        $or: [
+          { messageId: { $in: ids } },
+          { 'metadata.gardenHelpContext.origin_message_id': { $in: ids } },
+        ],
+        'metadata.gardenHelpContext': { $exists: true },
+      })
+        .select('messageId metadata.gardenHelpContext')
+        .lean();
+      const byId = new Map(
+        rows.flatMap((row) => [
+          [row.messageId, row.metadata.gardenHelpContext],
+          [row.metadata.gardenHelpContext.origin_message_id, row.metadata.gardenHelpContext],
+        ]),
+      );
+      return ids.map((id) => byId.get(id)).find((value) => value != null) ?? null;
+    },
+    async bindHelpTurnContext(user, conversationId, messageId, value) {
+      // This is the already authenticated personal Help conversation. Native saves
+      // subsequently fill the same row; metadata is never taken from the browser.
+      if (!(await conversations().exists({ user, conversationId, gardenHelp: true })))
+        throw new Error('UNAUTHENTICATED');
+      const existing = await this.readHelpTurnContext(user, conversationId, [messageId]);
+      if (existing) return existing;
+      try {
+        await mongoose.models.Message.updateOne(
+          { user, conversationId, messageId, 'metadata.gardenHelpContext': { $exists: false } },
+          {
+            $set: { 'metadata.gardenHelpContext': value },
+            $setOnInsert: { user, conversationId, messageId, isCreatedByUser: true },
+          },
+          { upsert: true },
+        );
+      } catch (error) {
+        if ((error as { code?: number }).code !== 11000) throw error;
+        const winner = await this.readHelpTurnContext(user, conversationId, [messageId]);
+        if (!winner) throw error;
+        return winner;
+      }
+      return value;
+    },
     async readHelpAttachment(user, conversationId, messageId, fileId, includeContent = false) {
       if (!(await conversations().exists({ user, conversationId }))) return null;
       if (

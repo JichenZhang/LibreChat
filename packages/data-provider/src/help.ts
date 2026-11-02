@@ -34,12 +34,18 @@ export type HelpSourceSelection =
       messageIds: string[];
       attachments?: { messageId: string; fileId: string; content: boolean }[];
     }
-  | { kind: 'document'; id: string; section?: number; heading?: string };
+  | { kind: 'document'; id: string; version?: string; section?: number; heading?: string }
+  | { kind: 'settings'; tab: string; section?: string };
+export interface HelpTurnContext {
+  origin_message_id?: string;
+  context: HelpContext | null;
+  status: 'captured' | 'none' | 'unavailable';
+}
 export interface HelpContext {
   evidence: HelpEvidence[];
   captured_at: string;
   label: string;
-  /** Server-verified selection recipe; refreshing it is always a user action. */
+  /** Server-verified selection at the originating message's send. */
   selection?: HelpSourceSelection;
 }
 export interface HelpSession {
@@ -58,6 +64,8 @@ export interface HelpSeal {
   sha256: string;
 }
 export interface HelpApprovedExport extends HelpSeal {
+  /** Native message owning this retained approval; never a browser actor. */
+  message_id?: string;
   action_id: string;
   tool_call_id: string;
   confirmed_at: string;

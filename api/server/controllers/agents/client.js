@@ -5,6 +5,7 @@ const { getBufferString, HumanMessage } = require('@librechat/agents/langchain/m
 const {
   createRun,
   createGardenHelpRuntime,
+  helpResumeSources,
   isGardenHelpRequest,
   isEnabled,
   checkAccess,
@@ -5466,12 +5467,12 @@ class AgentClient extends BaseClient {
           agents,
           files: [...modelBoundAgentFiles, ...dynamicToolContexts],
         },
-        {
+        helpResumeSources(this.options.req, {
           getAgentCheckpointer,
           onTraversalFailure: reportLocatorTraversalFailure,
           getMessages: db.getMessages,
           getFiles: db.getFiles,
-        },
+        }),
       );
       this.modelBoundCurrentFiles = [
         ...(Array.isArray(this.modelBoundCurrentFiles) ? this.modelBoundCurrentFiles : []),

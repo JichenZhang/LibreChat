@@ -3064,9 +3064,7 @@ function resolveResponses({ graph, messages, text, toolNames }) {
               attempts: 'Retried once',
               still_blocked: false,
             },
-            evidence_ids: text.match(/E2E_HELP_EVIDENCE=([A-Za-z0-9_/-]+)/)?.[1]
-              ? [text.match(/E2E_HELP_EVIDENCE=([A-Za-z0-9_/-]+)/)[1]]
-              : [],
+            evidence_ids: text.match(/E2E_HELP_EVIDENCE=([A-Za-z0-9_/,-]+)/)?.[1]?.split(',') ?? [],
             urgency_message_id: null,
             ai_priority_suggestion: { level: 'P2', reason: 'A manual workaround is available.' },
             association: null,

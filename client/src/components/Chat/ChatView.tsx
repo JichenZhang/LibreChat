@@ -22,12 +22,12 @@ import { QueuedTurnPortalProvider } from './Steering/QueuedTurnPortal';
 import ApprovalProvider from './Messages/Content/ApprovalContext';
 import ConversationStarters from './Input/ConversationStarters';
 import { pendingApprovalActionFamily } from './approval/state';
+import { helpChannelId, receiveHelpEntry } from './help/entry';
 import { useGetMessagesByConvoId } from '~/data-provider';
 import Footer, { useConfiguredFooter } from './Footer';
 import { AskAnswerHostProvider } from './ask/state';
 import MessagesView from './Messages/MessagesView';
 import useHelpMode from './help/useHelpMode';
-import { helpChannelId } from './help/entry';
 import HelpStarters from './help/Starters';
 import Presentation from './Presentation';
 import ChatForm from './Input/ChatForm';
@@ -132,7 +132,19 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
     const userId = helpSession.data?.userId;
     if (!helpMode || !userId || !conversationId) return;
     const channel = new BroadcastChannel('garden-help:' + userId + ':' + helpChannelId(userId));
-    channel.onmessage = (event: MessageEvent<{ type: string; text?: string }>) => {
+    channel.onmessage = (
+      event: MessageEvent<{
+        type: string;
+        text?: string;
+        entryId?: string;
+        previousMessageId?: string;
+        messageId?: string;
+      }>,
+    ) => {
+      if (event.data.type === 'consumed') {
+        receiveHelpEntry(userId, event.data);
+        return;
+      }
       if (event.data.type !== 'draft' || typeof event.data.text !== 'string') return;
       receivingHelpDraft.current = true;
       methods.setValue('text', event.data.text);

@@ -105,7 +105,7 @@ test('work chat and one native Help frame keep separate drafts; expand, edge Han
   await panel.getByRole('button', { name: 'Reset position', exact: true }).click();
   await expect(input).toHaveValue('PRIVATE HELP DRAFT');
   await page.screenshot({
-    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'H1-native-narrow.png'),
+    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'H1-R1-native-narrow.png'),
     fullPage: false,
   });
   const bounded = await page.context().newPage();
@@ -151,12 +151,14 @@ test('native once approval copies verified source to real Help/PG, then own/shar
   await frame.getByText(/Submitted materials \(1\)/).click();
   await expect(frame.getByText(/synthetic own current message/).last()).toBeVisible();
   await page.screenshot({
-    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'H1-native-approval.png'),
+    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'H1-R1-native-approval.png'),
   });
   await frame.getByRole('button', { name: 'Submit to Garden Help', exact: true }).click();
   const ownLink = frame.getByRole('link', { name: 'My feedback', exact: true });
   await expect(ownLink).toBeVisible({ timeout: 30000 });
-  await page.screenshot({ path: resolve(process.env.E2E_HELP_EVIDENCE!, 'H1-native-receipt.png') });
+  await page.screenshot({
+    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'H1-R1-native-receipt.png'),
+  });
   const ownURL = (await ownLink.getAttribute('href'))!;
   const issueURL = (await frame
     .getByRole('link', { name: 'Shared issue', exact: true })
@@ -194,7 +196,7 @@ test('native once approval copies verified source to real Help/PG, then own/shar
     404,
   );
   await shared.screenshot({
-    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'H1-shared-progress.png'),
+    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'H1-R1-shared-progress.png'),
     fullPage: false,
   });
   await shared.getByLabel('你的紧急程度', { exact: true }).selectOption('P1');
@@ -216,7 +218,7 @@ test('native once approval copies verified source to real Help/PG, then own/shar
     true,
   );
   await shared.screenshot({
-    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'H1-participation-narrow.png'),
+    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'H1-R1-participation-narrow.png'),
     fullPage: true,
   });
   const issueId = new URL(issueURL).searchParams.get('id');
@@ -226,7 +228,7 @@ test('native once approval copies verified source to real Help/PG, then own/shar
   await expect(manage.getByText(/u2-bob · P1/)).toBeVisible();
   await expect(manage.getByText('已授权的反馈摘要', { exact: true })).toBeVisible();
   await manage.screenshot({
-    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'H1-maintainer.png'),
+    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'H1-R1-maintainer.png'),
     fullPage: true,
   });
   await own.goto(issueURL);

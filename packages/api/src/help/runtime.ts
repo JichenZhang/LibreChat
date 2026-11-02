@@ -26,6 +26,7 @@ import { readHelpKnowledge } from './workspace';
 type Config = NonNullable<z.output<typeof configSchema>['gardenHelp']>;
 type ActorRequest = Pick<ServerRequest, 'config' | 'user'> & {
   gardenHelpApprovedSources?: HelpEvidence[];
+  gardenHelpApprovedParents?: HelpSeal['resume_parents'];
   body: ServerRequest['body'] & {
     gardenHelpSource?: HelpSourceSelection | null;
     gardenHelpContextMessageId?: string;
@@ -288,6 +289,7 @@ export async function retainHelpApproval(
     if (resolution.type !== 'approve' || !resolution.gardenHelp) continue;
     const approved = { ...resolution.gardenHelp, message_id: messageId };
     if (hash(approved.package_json) !== approved.sha256) throw new Error('APPROVAL_REQUIRED');
+    req.gardenHelpApprovedParents = approved.resume_parents;
     req.gardenHelpApprovedSources = (JSON.parse(approved.package_json) as HelpPackage).evidence;
     if (!(await db.retainHelpExport(req.user!.id, helpConversationId(req.user!.id), approved)))
       throw new Error('APPROVAL_UNAVAILABLE');
@@ -314,12 +316,27 @@ export function helpResumeSources<
     getMessages: async (filter) => {
       const messages = (await dependencies.getMessages(filter)) ?? [];
       if (filter.user !== req.user!.id || filter.conversationId !== conversationId) return messages;
-      const copies = originals.map((item) => ({
-        messageId: item.source.id.slice(conversationId.length + 1),
-        text: item.text ?? '',
-        isCreatedByUser: true,
-        role: 'user' as const,
-      }));
+      const byId = new Map(messages.map((message) => [message.messageId ?? message.id, message]));
+      const parents = new Map(
+        req.gardenHelpApprovedParents?.map((item) => [item.message_id, item.parent_message_id]),
+      );
+      const copies = originals.map((item) => {
+        const messageId = item.source.id.slice(conversationId.length + 1);
+        const original = byId.get(messageId);
+        return {
+          ...original,
+          // Historical text is user data; preserve branch links and attachment checks.
+          ...(parents.has(messageId) ? { parentMessageId: parents.get(messageId) } : {}),
+          messageId,
+          text: item.text ?? '',
+          isCreatedByUser: true,
+          content: [
+            ...(original?.content ?? []).filter((part) => part?.type !== 'text'),
+            { type: 'text', text: item.text ?? '' },
+          ],
+          role: 'user' as const,
+        };
+      });
       const copiedIds = new Set(copies.map((message) => message.messageId));
       return [
         ...messages.filter((message) => !copiedIds.has(message.messageId ?? message.id ?? '')),
@@ -445,12 +462,20 @@ export async function createGardenHelpRuntime(
         (value) => value.message_id === currentMessageId && value.tool_call_id === callId,
       );
       if (retained) return finish(pause(retained, callId)[callId], callId);
+      await deps?.userMessagePersistence;
+      // Active model-input protection defers native user persistence until admission.
+      // Resolve the branch when the tool runs, after that admission, rather than
+      // freezing an empty branch during model construction.
+      const branchIds = new Set(
+        await db.readHelpBranchIds(userId, conversationId, currentMessageId),
+      );
       const ownIds = input.evidence_ids
         .filter((id) => id.startsWith(`${conversationId}/`) && id.split('/').length === 2)
         .map((id) => id.slice(conversationId.length + 1));
       if (ownIds.some((id) => !branchIds.has(id)))
         return JSON.stringify({ error: { code: 'INVALID_SOURCE' } });
       const ownRows = ownIds.length ? await db.readHelpSources(userId, conversationId, ownIds) : [];
+      const provenance = new Map(ownRows.map((row) => [row.messageId, row]));
       const available = [
         ...(source?.evidence ?? []),
         ...ownRows.map((row) => messageEvidence(conversationId, row, new Date().toISOString())),
@@ -467,6 +492,7 @@ export async function createGardenHelpRuntime(
       if (branchIds.has(currentMessageId)) {
         const rows = await db.readHelpSources(userId, conversationId, [currentMessageId]);
         const row = rows.find((item) => item.messageId === currentMessageId);
+        if (row) provenance.set(row.messageId, row);
         // The native current user message owns the choice. A missing/stale model hint cannot
         // drop an explicit choice, resurrect an old vote or turn consent into a vote.
         const choice = row?.text.trim().split(/[，,。.!！\n]/, 1)[0] ?? '';
@@ -508,6 +534,7 @@ export async function createGardenHelpRuntime(
                 )
               : null;
           if (prior && suggestion) {
+            provenance.set(prior.messageId, prior);
             urgency = suggestion[1].toUpperCase() as HelpPackage['user_urgency'];
             if (
               !evidence.some((item) => item?.source.id === `${conversationId}/${prior.messageId}`)
@@ -541,7 +568,19 @@ export async function createGardenHelpRuntime(
       };
       let proposed: HelpSeal;
       try {
-        proposed = sealHelpPackage(value);
+        proposed = {
+          ...sealHelpPackage(value),
+          resume_parents: [...provenance.values()]
+            .filter((row) =>
+              value.evidence.some(
+                (item) => item.source.id === conversationId + '/' + row.messageId,
+              ),
+            )
+            .map((row) => ({
+              message_id: row.messageId,
+              parent_message_id: row.parentMessageId ?? null,
+            })),
+        };
       } catch {
         return JSON.stringify({ error: { code: 'TOO_LARGE', retryable: false } });
       }

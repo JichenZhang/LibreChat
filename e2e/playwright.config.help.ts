@@ -9,7 +9,7 @@ export default defineConfig({
   timeout: 60000,
   expect: { timeout: 15000 },
   reporter: 'list',
-  outputDir: '../../../output/implementation/garden-help/H1-fixture/browser-results',
+  outputDir: '../../../output/implementation/garden-help/H1-R1-fixture/browser-results',
   use: {
     ...devices['Desktop Chrome'],
     baseURL: 'http://127.0.0.1:25483',

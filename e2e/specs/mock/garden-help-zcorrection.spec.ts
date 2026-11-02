@@ -38,7 +38,7 @@ test('send binds current branch; reading another entry cannot mutate it; native 
     } catch {
       /* Other native request. */
     }
-    writeFileSync(resolve(evidence, 'H1-native-send-ids.json'), JSON.stringify(sent, null, 2));
+    writeFileSync(resolve(evidence, 'H1-R1-native-send-ids.json'), JSON.stringify(sent, null, 2));
   });
   await page.goto('/login');
   await page.getByLabel('Email', { exact: true }).fill('garden-help-h1@example.invalid');
@@ -65,9 +65,18 @@ test('send binds current branch; reading another entry cannot mutate it; native 
         'metadata.gardenHelpContext': { $exists: true },
       }),
     ).toBe(before);
-    await input.fill('E2E_REPLY:H1_FIRST_HELP');
-    await input.press('Enter');
-    await expect(frame.getByText('E2E reply H1_FIRST_HELP', { exact: true }).last()).toBeVisible();
+    const popup = page.waitForEvent('popup');
+    await page.getByRole('button', { name: 'Expand', exact: true }).click();
+    const expanded = await popup;
+    const expandedInput = expanded.getByRole('textbox', { name: 'Message input' });
+    await expandedInput.fill('E2E_REPLY:H1_FIRST_HELP');
+    await expandedInput.press('Enter');
+    await expect(
+      expanded.getByText('E2E reply H1_FIRST_HELP', { exact: true }).last(),
+    ).toBeVisible();
+    await expanded.close();
+    await page.getByRole('button', { name: 'Garden Help', exact: true }).click();
+    await expect(input).toHaveValue('');
     const first = await db
       .collection('messages')
       .findOne({ user: String(user!._id), text: 'E2E_REPLY:H1_FIRST_HELP' });
@@ -103,6 +112,10 @@ test('send binds current branch; reading another entry cannot mutate it; native 
         .gardenHelpContext.context.selection.conversationId,
     ).toBe(otherWorkId);
     await other.close();
+    await db
+      .collection('messages')
+      .updateMany({ conversationId: workId }, { $set: { text: 'LATER EDIT MUST NOT RECAPTURE' } });
+    await db.collection('messages').deleteMany({ conversationId: workId });
     // This tab's continuation retains its own branch context after the other tab sends.
     const choice =
       'P2，E2E_GARDEN_HELP_SUBMIT H1_TIMESTAMP_AND_DELETE E2E_HELP_EVIDENCE=' +
@@ -119,6 +132,9 @@ test('send binds current branch; reading another entry cannot mutate it; native 
       user: String(user!._id),
       text: choice,
     });
+    expect(paused!.metadata.gardenHelpContext).toEqual(
+      expect.objectContaining({ context: captured.context, status: 'captured' }),
+    );
     expect(paused!.updatedAt.getTime()).toBeGreaterThan(paused!.createdAt.getTime());
     // The real pause just re-saved the user message. No test patch replaces that write.
     await db.collection('messages').deleteMany({ user: String(user!._id), conversationId: workId });
@@ -173,7 +189,7 @@ test('send binds current branch; reading another entry cannot mutate it; native 
     await expect(history.getByText(/H1_FIRST_HELP/)).toBeVisible();
     await history.getByText('原文片段 3', { exact: true }).click();
     await expect(history.getByText(/H1_TIMESTAMP_AND_DELETE/)).toBeVisible();
-    await history.screenshot({ path: resolve(evidence, 'H1-native-history.png') });
+    await history.screenshot({ path: resolve(evidence, 'H1-R1-native-history.png') });
     await history.close();
     await page
       .getByRole('region', { name: 'Garden Help', exact: true })
@@ -215,9 +231,19 @@ test('send binds current branch; reading another entry cannot mutate it; native 
     await expect(
       frame.getByText('已保存为改进候选，不代表已安排开发。', { exact: true }).last(),
     ).toBeVisible();
-    await page.screenshot({ path: resolve(evidence, 'H1-native-chinese-receipt.png') });
+    const chineseReceipt = frame
+      .getByText('已保存为改进候选，不代表已安排开发。', { exact: true })
+      .last();
+    await chineseReceipt.scrollIntoViewIfNeeded();
+    await frame
+      .getByRole('status')
+      .filter({ has: chineseReceipt })
+      .screenshot({
+        path: resolve(evidence, 'H1-R1-native-chinese-receipt.png'),
+      });
+    await page.screenshot({ path: resolve(evidence, 'H1-R1-native-chinese-viewport.png') });
     writeFileSync(
-      resolve(evidence, 'H1-native-receipt.json'),
+      resolve(evidence, 'H1-R1-native-receipt.json'),
       JSON.stringify(
         {
           receipt,

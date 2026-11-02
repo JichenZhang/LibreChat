@@ -59,6 +59,8 @@ export interface HelpSession {
   created: boolean;
 }
 export interface HelpSeal {
+  /** Server-owned branch links for selected own Help text, retained in the native preview only. */
+  resume_parents?: { message_id: string; parent_message_id: string | null }[];
   submission_id: string;
   package_json: string;
   sha256: string;

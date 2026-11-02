@@ -8,6 +8,7 @@ import { resolveDownloadPath } from '~/storage/path';
 
 export type HelpDependencies = Partial<Pick<ProvisionDeps, 'getStrategyFunctions'>> & {
   workspaceSecret?: string;
+  userMessagePersistence?: Promise<unknown>;
 };
 type Selection = { messageId: string; fileId: string; content: boolean };
 

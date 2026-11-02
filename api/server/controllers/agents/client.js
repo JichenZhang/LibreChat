@@ -4872,6 +4872,7 @@ class AgentClient extends BaseClient {
           {
             getStrategyFunctions,
             workspaceSecret: process.env.GARDEN_WORKSPACE_MCP_SERVICE_SECRET,
+            userMessagePersistence: this.modelBoundUserMessagePersistence?.promise,
           },
         );
         // HITL: establish an empty checkpoint barrier for THIS immutable generation

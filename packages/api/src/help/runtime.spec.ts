@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { resolve, sep } from 'node:path';
 import { ToolNode } from '@librechat/agents';
 import { AIMessage } from '@langchain/core/messages';
+import { FileSources } from 'librechat-data-provider';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import {
   Command,
@@ -27,6 +28,7 @@ import {
   sealHelpPackage,
 } from './runtime';
 import { captureHelpAttachments, verifyHelpAttachment } from './attachments';
+import { getResumeContentInspection } from '~/agents/hitl/inspection';
 import { helpDocumentSource, readHelpKnowledge } from './workspace';
 import { resolveToolApprovalResume } from '~/agents/hitl/resume';
 import { buildPendingAction } from '~/agents/hitl/policy';
@@ -49,6 +51,7 @@ describe('Garden Help fixed native approval (R2; existing SDK ToolNode/MemorySav
     options: {
       messages?: HelpSourceMessage[];
       currentMessageId?: string;
+      deferredBranch?: boolean;
       input?: Record<string, unknown>;
     } = {},
   ) {
@@ -67,6 +70,7 @@ describe('Garden Help fixed native approval (R2; existing SDK ToolNode/MemorySav
     ];
     const conversationId = helpConversationId(userId);
     let retained: HelpApprovedExport | undefined;
+    let branchReads = 0;
     const db: HelpChatMethods = {
       readHelpTurnContext: jest.fn(async () => ({
         context: {
@@ -81,7 +85,11 @@ describe('Garden Help fixed native approval (R2; existing SDK ToolNode/MemorySav
       replaceHelpContext: jest.fn(),
       releaseHelpExport: jest.fn(),
       readHelpAttachment: jest.fn(),
-      readHelpBranchIds: jest.fn(async () => messages.map((message) => message.messageId)),
+      readHelpBranchIds: jest.fn(async () =>
+        options.deferredBranch && branchReads++ === 0
+          ? []
+          : messages.map((message) => message.messageId),
+      ),
       readHelpChat: jest.fn(async () => ({
         gardenHelpContext: {
           label: 'selected branch',
@@ -233,7 +241,14 @@ describe('Garden Help fixed native approval (R2; existing SDK ToolNode/MemorySav
     });
     expect(
       await copies.getMessages({ user: f.req.user!.id, conversationId: f.conversationId }),
-    ).toEqual([{ messageId: 'user-choice', text: 'P1', isCreatedByUser: true, role: 'user' }]);
+    ).toEqual([
+      expect.objectContaining({
+        messageId: 'user-choice',
+        text: 'P1',
+        isCreatedByUser: true,
+        role: 'user',
+      }),
+    ]);
     expect(
       await copies.getMessages({ user: 'other-user', conversationId: f.conversationId }),
     ).toEqual([]);
@@ -263,6 +278,104 @@ describe('Garden Help fixed native approval (R2; existing SDK ToolNode/MemorySav
       (f.payload.action_requests[0].arguments as unknown as HelpApprovedExport).package_json,
     );
   });
+  test('submit resolves the current branch after protected native admission persists the user turn', async () => {
+    const f = await fixture({ deferredBranch: true });
+    const seal = f.payload.action_requests[0].arguments as unknown as HelpApprovedExport;
+    expect(JSON.parse(seal.package_json).user_urgency).toBe('P1');
+    expect(seal.resume_parents).toEqual([{ message_id: 'user-choice', parent_message_id: null }]);
+  });
+
+  test('legacy pending seals keep stored parent links and attachment protection metadata', async () => {
+    const f = await fixture();
+    delete (f.payload.action_requests[0].arguments as unknown as HelpApprovedExport).resume_parents;
+    const accepted = resolveToolApprovalResume(
+      f.payload,
+      [{ tool_call_id: 'help-call', decision: 'approve', scope: 'once' }],
+      { actionId: 'legacy-action' },
+    );
+    if (!('resumeValue' in accepted)) throw new Error('approval');
+    await retainHelpApproval(f.req, f.db, accepted.resumeValue, 'user-choice');
+    const files = [{ file_id: 'selected-row-unselected-file' }];
+    const attachment = { type: 'image_file', image_file: { file_id: 'content-file' } };
+    const original = {
+      messageId: 'user-choice',
+      parentMessageId: 'earlier',
+      text: 'later live edit',
+      files,
+      content: [attachment, { type: 'text', text: 'later live edit' }],
+    };
+    const adapted = helpResumeSources(f.req, {
+      getMessages: jest.fn(async (_filter: { user?: string; conversationId: string }) => [
+        original,
+      ]),
+    });
+    const rows = await adapted.getMessages({
+      user: f.req.user!.id,
+      conversationId: f.conversationId,
+    });
+    expect(rows[0]).toEqual(
+      expect.objectContaining({ parentMessageId: 'earlier', text: 'P1', files }),
+    );
+    expect(rows[0].content).toEqual([attachment, { type: 'text', text: 'P1' }]);
+  });
+  test.each([false, true])(
+    'active history inspection retains selected branch provenance (deleted=%s)',
+    async (deleted) => {
+      const messages: HelpSourceMessage[] = [
+        { messageId: 'early', text: 'Earlier question', isCreatedByUser: true, truncated: false },
+        {
+          messageId: 'reply',
+          parentMessageId: 'early',
+          text: 'Earlier reply',
+          isCreatedByUser: false,
+          truncated: false,
+        },
+        {
+          messageId: 'user-choice',
+          parentMessageId: 'reply',
+          text: 'P1',
+          isCreatedByUser: true,
+          truncated: false,
+        },
+      ];
+      const f = await fixture({ messages });
+      const accepted = resolveToolApprovalResume(
+        f.payload,
+        [{ tool_call_id: 'help-call', decision: 'approve', scope: 'once' }],
+        { actionId: 'history-action' },
+      );
+      if (!('resumeValue' in accepted)) throw new Error('approval');
+      await retainHelpApproval(f.req, f.db, accepted.resumeValue, 'user-choice');
+      const getMessages = jest.fn(async () =>
+        messages.filter((row) => !deleted || row.messageId !== 'user-choice'),
+      );
+      const adapted = helpResumeSources(f.req, { getMessages });
+      const inspection = await getResumeContentInspection({
+        appConfig: {
+          config: {},
+          fileStrategy: FileSources.local,
+          imageOutputType: 'png',
+          filters: { messages: { pii: { fields: ['text'], starterPatterns: ['sk_prefix'] } } },
+        },
+        conversationId: f.conversationId,
+        targetMessageId: 'user-choice',
+        user: f.req.user,
+        supplementalMessages: [],
+        submittedMessages: [],
+        liveFiles: [],
+        isTemporary: false,
+        getMessages: adapted.getMessages,
+        getFiles: jest.fn(async () => []),
+      });
+      expect(inspection.storedMessages.map((row) => row.messageId)).toEqual([
+        'early',
+        'reply',
+        'user-choice',
+      ]);
+      expect(inspection.storedMessages[inspection.storedMessages.length - 1]?.text).toBe('P1');
+      expect(getMessages).toHaveBeenCalledTimes(1);
+    },
+  );
   test('an unknown transport result retains the confirmed copy and stable submission for retry', async () => {
     const f = await fixture();
     const accepted = resolveToolApprovalResume(

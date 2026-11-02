@@ -1,10 +1,29 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import type { TMessage } from 'librechat-data-provider';
-import { stageHelpEntry, pendingHelpEntry, consumeHelpEntry } from './entry';
+import {
+  stageHelpEntry,
+  pendingHelpEntry,
+  consumeHelpEntry,
+  receiveHelpEntry,
+  helpContextMessageId,
+} from './entry';
 import HelpSource, { currentWorkSource } from './Source';
 
 jest.mock('~/hooks', () => ({ useLocalize: () => (key: string) => key }));
+let posted: { entryId: string; previousMessageId?: string; messageId?: string };
+beforeEach(() => {
+  Object.defineProperty(global, 'BroadcastChannel', {
+    configurable: true,
+    value: class {
+      postMessage(value: typeof posted) {
+        posted = value;
+      }
+
+      close() {}
+    },
+  });
+});
 afterEach(() => sessionStorage.clear());
 const selected = { kind: 'chat' as const, conversationId: 'work-A', messageIds: ['one'] };
 test('opening only stages a tab-local descriptor; first send consumes it and continuation does not recapture', () => {
@@ -73,4 +92,28 @@ test('capture failure is truthful and never displays a previous source', () => {
     />,
   );
   expect(screen.getByText(/com_ui_help_source_error/)).toBeVisible();
+});
+
+test('expanded consumption synchronizes both ways, rejects a different entry/account and never revives a newer anchor', () => {
+  stageHelpEntry('alice', selected);
+  const origin = sessionStorage.getItem('garden-help-entry-v2:alice')!;
+  consumeHelpEntry('alice', 'expanded-first');
+  const expanded = sessionStorage.getItem('garden-help-entry-v2:alice')!;
+  const firstEvent = posted;
+  sessionStorage.setItem('garden-help-entry-v2:alice', origin);
+  receiveHelpEntry('bob', firstEvent);
+  expect(helpContextMessageId('bob')).toBeUndefined();
+  receiveHelpEntry('alice', firstEvent);
+  expect(pendingHelpEntry('alice')).toBeUndefined();
+  expect(helpContextMessageId('alice')).toBe('expanded-first');
+  consumeHelpEntry('alice', 'origin-second');
+  const secondEvent = posted;
+  sessionStorage.setItem('garden-help-entry-v2:alice', expanded);
+  receiveHelpEntry('alice', secondEvent);
+  receiveHelpEntry('alice', firstEvent);
+  expect(helpContextMessageId('alice')).toBe('origin-second');
+  stageHelpEntry('alice', { kind: 'settings', tab: 'account' });
+  receiveHelpEntry('alice', secondEvent);
+  expect(pendingHelpEntry('alice')).toEqual({ kind: 'settings', tab: 'account' });
+  expect(helpContextMessageId('alice')).toBeUndefined();
 });

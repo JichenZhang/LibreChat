@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { HelpCircle } from 'lucide-react';
 import { Button } from '@librechat/client';
+import { GripHorizontal, HelpCircle, Maximize2, X } from 'lucide-react';
 import type { HelpSourceSelection, TMessage } from 'librechat-data-provider';
 import { stageHelpEntry, helpChannelId, refreshPendingHelpEntry } from './entry';
 import { useGetStartupConfig } from '~/data-provider';
@@ -9,13 +9,24 @@ import useHelpSession from './useHelpSession';
 import { currentWorkSource } from './Source';
 import { setDraft } from '~/utils';
 
-type Layout = { x: number; y: number; dock: 'left' | 'right' | null };
+type Point = { x: number; y: number };
+type Layout = Point & { dock: 'left' | 'right' | null; panel?: Point };
 const key = 'garden-help-layout-v1';
 const viewport = () => ({
   width: window.visualViewport?.width ?? innerWidth,
   height: window.visualViewport?.height ?? innerHeight,
   top: window.visualViewport?.offsetTop ?? 0,
 });
+function panelBounds(value: Layout, view: ReturnType<typeof viewport>) {
+  const width = Math.min(420, view.width - 16);
+  const height = Math.min(620, view.height - 16);
+  return {
+    x: Math.max(8, Math.min(value.panel?.x ?? value.x, view.width - width - 8)),
+    y: Math.max(8, Math.min(value.panel?.y ?? value.y - 520, view.height - height - 8)),
+    width,
+    height,
+  };
+}
 function constrain(value?: Layout): Layout {
   const v = viewport();
   let width = v.width < 640 ? 48 : 144;
@@ -33,6 +44,9 @@ function constrain(value?: Layout): Layout {
       ),
     ),
     dock: value?.dock ?? null,
+    ...(Number.isFinite(value?.panel?.x) && Number.isFinite(value?.panel?.y)
+      ? { panel: value?.panel }
+      : {}),
   };
 }
 function storedLayout(): Layout {
@@ -72,7 +86,16 @@ export default function HelpMount({
 
   const opener = useRef<HTMLButtonElement>(null);
   const frame = useRef<HTMLIFrameElement>(null);
-  const drag = useRef<{ x: number; y: number; start: Layout; moved: boolean } | null>(null);
+  const panel = useRef<HTMLElement>(null);
+  const drag = useRef<{
+    x: number;
+    y: number;
+    start: Layout;
+    next: Layout;
+    moved: boolean;
+    pointerId: number;
+    panel?: Point;
+  } | null>(null);
   const suppressClick = useRef(false);
   const opening = useRef(false);
   const actor = useRef(user?.id);
@@ -183,35 +206,61 @@ export default function HelpMount({
   };
   const mobile = view.width < 640;
   const docked = mobile && layout.dock != null;
+  const bounds = panelBounds(layout, view);
   const onPointerDown = (event: React.PointerEvent<HTMLElement>) => {
-    if (event.button !== 0) return;
-    drag.current = { x: event.clientX, y: event.clientY, start: layout, moved: false };
+    if (event.button !== 0 || drag.current) return;
+    const isHeader = event.currentTarget.tagName === 'HEADER';
+    if (isHeader && (event.target as Element).closest('[data-help-control]')) return;
+    const rect = isHeader ? panel.current?.getBoundingClientRect() : undefined;
+    drag.current = {
+      x: event.clientX,
+      y: event.clientY,
+      start: layout,
+      next: layout,
+      moved: false,
+      pointerId: event.pointerId,
+      ...(rect ? { panel: { x: rect.left, y: rect.top - view.top } } : {}),
+    };
+    event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
   };
   const onPointerMove = (event: React.PointerEvent<HTMLElement>) => {
     const origin = drag.current;
-    if (!origin) return;
+    if (!origin || origin.pointerId !== event.pointerId) return;
     const dx = event.clientX - origin.x,
       dy = event.clientY - origin.y;
-    if (Math.abs(dx) + Math.abs(dy) > 6) origin.moved = true;
-    if (origin.moved)
-      setLayout(constrain({ x: origin.start.x + dx, y: origin.start.y + dy, dock: null }));
+    if (origin.panel ? dx !== 0 || dy !== 0 : Math.abs(dx) + Math.abs(dy) > 6) origin.moved = true;
+    if (!origin.moved) return;
+    if (origin.panel) {
+      const next = panelBounds(
+        { ...origin.start, panel: { x: origin.panel.x + dx, y: origin.panel.y + dy } },
+        view,
+      );
+      origin.next = { ...origin.start, panel: { x: next.x, y: next.y } };
+    } else {
+      origin.next = constrain({ x: origin.start.x + dx, y: origin.start.y + dy, dock: null });
+    }
+    setLayout(origin.next);
   };
   const onPointerUp = (event: React.PointerEvent<HTMLElement>) => {
     const origin = drag.current;
-    if (!origin) return;
+    if (!origin || origin.pointerId !== event.pointerId) return;
     drag.current = null;
     if (!origin.moved) return;
+    if (origin.panel) {
+      persist(origin.next);
+      return;
+    }
     suppressClick.current = true;
-    // Only suppress the click synthesized by this release, never the next deliberate tap.
+    // Suppress only the click synthesized by a launcher drag.
     setTimeout(() => {
       suppressClick.current = false;
     }, 0);
     let dock: Layout['dock'] = null;
-    if (mobile && (event.clientX <= 12 || layout.x <= 12)) dock = 'left';
-    else if (mobile && (event.clientX >= view.width - 12 || layout.x + 48 >= view.width - 12))
+    if (mobile && (event.clientX <= 12 || origin.next.x <= 12)) dock = 'left';
+    else if (mobile && (event.clientX >= view.width - 12 || origin.next.x + 48 >= view.width - 12))
       dock = 'right';
-    persist(constrain({ ...layout, dock }));
+    persist(constrain({ ...origin.next, dock }));
   };
   const dragProps = {
     onPointerDown,
@@ -221,6 +270,28 @@ export default function HelpMount({
       if (drag.current) setLayout(drag.current.start);
       drag.current = null;
     },
+  };
+  const moveByKeyboard = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === 'Home') {
+      event.preventDefault();
+      persist(constrain());
+      return;
+    }
+    const step = event.shiftKey ? 40 : 10;
+    const offsets: Record<string, Point> = {
+      ArrowLeft: { x: -step, y: 0 },
+      ArrowRight: { x: step, y: 0 },
+      ArrowUp: { x: 0, y: -step },
+      ArrowDown: { x: 0, y: step },
+    };
+    const offset = offsets[event.key];
+    if (!offset) return;
+    event.preventDefault();
+    const next = panelBounds(
+      { ...layout, panel: { x: bounds.x + offset.x, y: bounds.y + offset.y } },
+      view,
+    );
+    persist({ ...layout, panel: { x: next.x, y: next.y } });
   };
   let launcherWidth = mobile ? 48 : 144;
   if (docked) launcherWidth = 44;
@@ -268,51 +339,57 @@ export default function HelpMount({
       )}
       {started && (
         <section
+          ref={panel}
           aria-label={localize('com_ui_help_name')}
           hidden={!opened}
           className="garden-help-panel fixed z-50 flex flex-col overflow-hidden rounded-xl border border-border-light bg-surface-primary text-text-primary"
           style={{
             display: opened ? 'flex' : 'none',
-            left: mobile ? 8 : Math.max(8, Math.min(layout.x, view.width - 428)),
-            top: view.top + Math.max(8, Math.min(layout.y - 520, view.height - 640)),
-            width: Math.min(420, view.width - 16),
-            height: Math.min(620, view.height - 16),
+            left: bounds.x,
+            top: view.top + bounds.y,
+            width: bounds.width,
+            height: bounds.height,
           }}
         >
-          <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border-light px-3">
-            <h2 className="mr-auto font-semibold">{localize('com_ui_help_title')}</h2>
-            <details>
-              <summary className="flex min-h-11 cursor-pointer items-center">
-                {localize('com_ui_help_position')}
-              </summary>
-              <div className="absolute right-2 z-10 flex flex-col border border-border-light bg-surface-primary p-2">
-                <Button
-                  variant="ghost"
-                  className="min-h-11"
-                  onClick={(event) => {
-                    persist(constrain({ ...layout, dock: 'right' }));
-                    event.currentTarget.closest('details')?.removeAttribute('open');
-                  }}
-                >
-                  {localize('com_ui_help_dock')}
-                </Button>
-                <Button
-                  variant="ghost"
-                  className="min-h-11"
-                  onClick={(event) => {
-                    persist(constrain());
-                    event.currentTarget.closest('details')?.removeAttribute('open');
-                  }}
-                >
-                  {localize('com_ui_help_reset')}
-                </Button>
-              </div>
-            </details>
-            <Button variant="ghost" className="min-h-11" onClick={expand}>
-              {localize('com_ui_help_expand')}
+          <header
+            className="relative flex h-12 shrink-0 cursor-grab touch-none select-none items-center border-b border-border-light px-2 active:cursor-grabbing"
+            {...dragProps}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') close();
+            }}
+          >
+            <h2 className="mr-auto min-w-0 truncate text-sm font-semibold">
+              {localize('com_ui_help_title')}
+            </h2>
+            <button
+              type="button"
+              aria-label={localize('com_ui_help_window_move')}
+              title={localize('com_ui_help_window_move')}
+              aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Home"
+              className="absolute left-1/2 top-1/2 flex size-11 -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-md text-text-tertiary focus-visible:outline focus-visible:outline-2 focus-visible:outline-border-heavy active:cursor-grabbing"
+              onKeyDown={moveByKeyboard}
+            >
+              <GripHorizontal aria-hidden="true" className="size-4" />
+            </button>
+            <Button
+              data-help-control="true"
+              variant="ghost"
+              className="size-11 shrink-0 p-0"
+              aria-label={localize('com_ui_help_expand')}
+              title={localize('com_ui_help_expand_hint')}
+              onClick={expand}
+            >
+              <Maximize2 aria-hidden="true" className="size-4" />
             </Button>
-            <Button variant="ghost" className="min-h-11" onClick={close}>
-              {localize('com_ui_close')}
+            <Button
+              data-help-control="true"
+              variant="ghost"
+              className="size-11 shrink-0 p-0"
+              aria-label={localize('com_ui_close')}
+              title={localize('com_ui_close')}
+              onClick={close}
+            >
+              <X aria-hidden="true" className="size-4" />
             </Button>
           </header>
           {popupBlocked && <p role="alert">{localize('com_ui_help_popup_blocked')}</p>}

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { resolve } from 'node:path';
 import { setupHelpFixture } from './garden-help-fixture';
 import { sendMessageAndWaitForCompletion } from './helpers';
@@ -16,6 +17,31 @@ test.beforeEach(async ({ page }) => {
   await page.waitForURL('**/c/**');
 });
 
+async function dragHeader(
+  page: Page,
+  panel: Locator,
+  target: Locator,
+  dx: number,
+  dy: number,
+  blank = false,
+) {
+  const before = (await panel.boundingBox())!;
+  const box = (await target.boundingBox())!;
+  const x = blank ? box.x + 145 : box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + dx, y + dy, { steps: 8 });
+  await page.mouse.up();
+  const viewport = page.viewportSize()!;
+  await expect
+    .poll(async () => Math.round((await panel.boundingBox())!.x))
+    .toBe(Math.round(Math.max(8, Math.min(before.x + dx, viewport.width - before.width - 8))));
+  await expect
+    .poll(async () => Math.round((await panel.boundingBox())!.y))
+    .toBe(Math.round(Math.max(8, Math.min(before.y + dy, viewport.height - before.height - 8))));
+}
+
 test('work chat and one native Help frame keep separate drafts; expand, edge Handle and reload preserve the same chat', async ({
   page,
 }) => {
@@ -27,6 +53,11 @@ test('work chat and one native Help frame keep separate drafts; expand, edge Han
   const workURL = page.url();
   const main = page.getByRole('textbox', { name: 'Message input' });
   await main.fill('PRIVATE WORK DRAFT');
+  let agentRequests = 0;
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname.startsWith('/api/agents/'))
+      agentRequests++;
+  });
   const preference = () => page.evaluate(() => localStorage.getItem('lastConversationSetup_0'));
   const ordinaryPreference = await preference();
   await page.getByRole('button', { name: 'Garden Help', exact: true }).click();
@@ -99,15 +130,125 @@ test('work chat and one native Help frame keep separate drafts; expand, edge Han
   await page.mouse.up();
   await expect.poll(async () => (await launcher.boundingBox())?.width).toBe(48);
   await launcher.click();
-  const position = panel.locator('summary').filter({ hasText: 'Position' });
-  await position.focus();
-  await position.press('Enter');
-  await panel.getByRole('button', { name: 'Reset position', exact: true }).click();
+  const grip = panel.getByRole('button', {
+    name: 'Move Help window (arrow keys to move, Home to reset)',
+    exact: true,
+  });
+  await grip.focus();
+  await grip.press('Home');
   await expect(input).toHaveValue('PRIVATE HELP DRAFT');
   await page.screenshot({
-    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'H1-R1-native-narrow.png'),
+    path: resolve(process.env.E2E_HELP_EVIDENCE!, 'H1-UI-native-narrow.png'),
     fullPage: false,
   });
+  const requestsBeforeHeader = agentRequests;
+  // Title, empty header space and grip all move the actual panel, without launcher clamps.
+  for (const width of [1280, 375]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate((value) => {
+        localStorage.setItem('color-theme', value);
+        localStorage.setItem('lang', JSON.stringify('zh-Hans'));
+      }, theme);
+      await page.reload();
+      await page.getByRole('button', { name: 'Garden 帮助', exact: true }).click();
+      const localizedPanel = page.getByRole('region', { name: 'Garden 帮助', exact: true });
+      const header = localizedPanel.locator('header');
+      const move = localizedPanel.getByRole('button', {
+        name: '移动帮助窗口（方向键移动，Home 恢复默认位置）',
+        exact: true,
+      });
+      const close = localizedPanel.getByRole('button', { name: '关闭', exact: true });
+      const expand = localizedPanel.getByRole('button', { name: '展开', exact: true });
+      await expect(frame.getByRole('textbox', { name: '消息输入' })).toHaveValue(
+        'PRIVATE HELP DRAFT',
+      );
+      const assertInViewport = async () => {
+        const box = (await localizedPanel.boundingBox())!;
+        expect(box.x).toBeGreaterThanOrEqual(8);
+        expect(box.y).toBeGreaterThanOrEqual(8);
+        expect(Math.round(box.x + box.width)).toBeLessThanOrEqual(page.viewportSize()!.width - 8);
+        expect(Math.round(box.y + box.height)).toBeLessThanOrEqual(page.viewportSize()!.height - 8);
+      };
+      await assertInViewport();
+      await expect(header.locator('summary')).toHaveCount(0);
+      await expect(close).toHaveText('');
+      await expect(expand).toHaveText('');
+      await expect(expand).toHaveAttribute('title', '在新标签页中展开');
+      await expect(page.locator('html')).toHaveClass(new RegExp(theme));
+      await move.focus();
+      await move.press('Home');
+      await frame.getByRole('textbox', { name: '消息输入' }).focus();
+      await page.screenshot({
+        path: resolve(
+          process.env.E2E_HELP_EVIDENCE!,
+          'H1-UI-' + width + '-' + theme + '-before.png',
+        ),
+      });
+      await dragHeader(page, localizedPanel, header.getByRole('heading'), -24, -24);
+      await dragHeader(page, localizedPanel, header, 0, -24, true);
+      await dragHeader(page, localizedPanel, move, 0, 12);
+      const beforeKeys = (await localizedPanel.boundingBox())!;
+      await move.focus();
+      await move.press('ArrowDown');
+      await expect
+        .poll(async () => Math.round((await localizedPanel.boundingBox())!.y))
+        .toBe(Math.round(beforeKeys.y + 10));
+      await page.screenshot({
+        path: resolve(
+          process.env.E2E_HELP_EVIDENCE!,
+          'H1-UI-' + width + '-' + theme + '-after.png',
+        ),
+      });
+      if (width === 375 && theme === 'light') {
+        const touch = await page.context().newCDPSession(page);
+        await touch.send('Emulation.setTouchEmulationEnabled', {
+          enabled: true,
+          maxTouchPoints: 1,
+        });
+        const beforeTouch = (await localizedPanel.boundingBox())!;
+        const point = { x: beforeTouch.x + 145, y: beforeTouch.y + 24 };
+        await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+        await touch.send('Input.dispatchTouchEvent', {
+          type: 'touchMove',
+          touchPoints: [{ x: point.x, y: point.y - 18 }],
+        });
+        await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await expect
+          .poll(async () => Math.round((await localizedPanel.boundingBox())!.y))
+          .toBe(Math.round(beforeTouch.y - 18));
+        await touch.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+        await touch.detach();
+      }
+      if (width === 375 && theme === 'dark') {
+        await page.setViewportSize({ width, height: 500 });
+        await assertInViewport();
+        await expect(close).toBeVisible();
+        await page.setViewportSize({ width, height: 900 });
+        await assertInViewport();
+      }
+      // Dragging from an icon must not move the window or close it on release outside.
+      const beforeControl = await localizedPanel.boundingBox();
+      const icon = (await close.boundingBox())!;
+      await page.mouse.move(icon.x + icon.width / 2, icon.y + icon.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(icon.x - 30, icon.y + 70);
+      await page.mouse.up();
+      expect(await localizedPanel.boundingBox()).toEqual(beforeControl);
+      await expect(localizedPanel).toBeVisible();
+      await close.click();
+      await expect(page.getByRole('button', { name: 'Garden 帮助', exact: true })).toBeFocused();
+      await page.getByRole('button', { name: 'Garden 帮助', exact: true }).click();
+      expect(await localizedPanel.boundingBox()).toEqual(beforeControl);
+      await move.focus();
+      await move.press('Home');
+      await move.press('Escape');
+    }
+  }
+  expect(agentRequests).toBe(requestsBeforeHeader);
+  // Restore the existing journey's language before its cold/native navigation assertions.
+  await page.evaluate(() => localStorage.setItem('lang', JSON.stringify('en')));
+  await page.reload();
   const bounded = await page.context().newPage();
   await bounded.goto(`${workURL}?gardenHelp=1`);
   const expected = new URL(sourceURL!, 'http://127.0.0.1:25483');
